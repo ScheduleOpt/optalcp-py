@@ -1,0 +1,11 @@
+typing-extensions>=4.0.0
+nest-asyncio>=1.5.0
+
+[dev]
+pytest>=7.0
+pytest-asyncio>=0.21.0
+mypy>=1.0
+pyright>=1.1.0
+
+[fast]
+orjson>=3.9.0

@@ -1,0 +1,59 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "optalcp"
+version = "2025.11.1"
+description = "Python API for OptalCP constraint programming solver"
+readme = "README.md"
+requires-python = ">=3.10"
+license = "LicenseRef-Proprietary"
+authors = [
+    {name = "CoEnzyme SAS"}
+]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "Intended Audience :: Science/Research",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Scientific/Engineering",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+]
+
+dependencies = [
+    "typing-extensions>=4.0.0",
+    "nest-asyncio>=1.5.0",
+]
+
+[project.optional-dependencies]
+# Fast JSON serialization (5-10x speedup for large models)
+fast = ["orjson>=3.9.0"]
+
+# Development dependencies
+dev = [
+    "pytest>=7.0",
+    "pytest-asyncio>=0.21.0",
+    "mypy>=1.0",
+    "pyright>=1.1.0",
+]
+
+[project.urls]
+Homepage = "https://optalcp.com"
+Documentation = "https://optalcp.com/docs"
+Repository = "https://github.com/ScheduleOpt/optalcp"
+
+[tool.setuptools.packages.find]
+include = ["optalcp*"]
+
+[tool.setuptools.package-data]
+optalcp = ["py.typed"]
+
+[tool.mypy]
+python_version = "3.10"
+warn_return_any = true
+warn_unused_configs = true
+disallow_untyped_defs = false

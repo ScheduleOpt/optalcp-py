@@ -1,0 +1,65 @@
+Metadata-Version: 2.4
+Name: optalcp
+Version: 2025.11.1
+Summary: Python API for OptalCP constraint programming solver
+Author: CoEnzyme SAS
+License-Expression: LicenseRef-Proprietary
+Project-URL: Homepage, https://optalcp.com
+Project-URL: Documentation, https://optalcp.com/docs
+Project-URL: Repository, https://github.com/ScheduleOpt/optalcp
+Classifier: Development Status :: 3 - Alpha
+Classifier: Intended Audience :: Developers
+Classifier: Intended Audience :: Science/Research
+Classifier: Programming Language :: Python :: 3
+Classifier: Programming Language :: Python :: 3.10
+Classifier: Programming Language :: Python :: 3.11
+Classifier: Programming Language :: Python :: 3.12
+Classifier: Topic :: Scientific/Engineering
+Classifier: Topic :: Software Development :: Libraries :: Python Modules
+Requires-Python: >=3.10
+Description-Content-Type: text/markdown
+Requires-Dist: typing-extensions>=4.0.0
+Requires-Dist: nest-asyncio>=1.5.0
+Provides-Extra: fast
+Requires-Dist: orjson>=3.9.0; extra == "fast"
+Provides-Extra: dev
+Requires-Dist: pytest>=7.0; extra == "dev"
+Requires-Dist: pytest-asyncio>=0.21.0; extra == "dev"
+Requires-Dist: mypy>=1.0; extra == "dev"
+Requires-Dist: pyright>=1.1.0; extra == "dev"
+
+# OptalCP Python API
+
+This package provides a Python interface to [OptalCP solver](https://optalcp.com).
+The name of the package is `optalcp`.
+
+To use this package, you need the OptalCP binary on your system.
+You can use the [optalcp-bin-preview](https://github.com/ScheduleOpt/optalcp-py-bin-preview) package, which provides a preview version.
+The preview version solves all problems but reports only objective values, not values of the decision variables.
+
+Usually, there's no need to install `optalcp` directly.
+It is automatically installed with [optalcp-bin-preview](https://github.com/ScheduleOpt/optalcp-py-bin-preview) or `optalcp-bin` package.
+
+## Installation
+
+```bash
+# Install preview edition (public, no authentication required)
+pip install git+https://github.com/ScheduleOpt/optalcp-py-bin-preview@latest
+
+# This automatically installs the optalcp API package as a dependency
+```
+
+The preview edition solves all problems but reports only objective values (no solution details).
+
+## Full and Academic Editions
+
+For full functionality with solution details:
+
+- **Full edition** (`optalcp-bin`): Commercial license, requires GitHub authentication
+- **Academic edition** (`optalcp-bin-academic`): **Free for academic use**, requires GitHub authentication
+
+Contact [ScheduleOpt](https://optalcp.com) for licensing options. Academic licenses are provided free of charge for qualified academic institutions.
+
+## Documentation
+
+The documentation for the Python API can be found on the [OptalCP web page](https://optalcp.com/docs/api).
