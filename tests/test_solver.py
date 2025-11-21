@@ -508,3 +508,230 @@ async def test_type_exports():
     print("  ✓ LowerBoundEntry type exported and verified")
 
     return True
+
+
+@pytest.mark.asyncio
+async def test_async_event_handlers():
+    """Test that event handlers can be async functions."""
+
+    results = RunResults()
+    call_order = []
+
+    # Async event handlers that simulate some async work
+    async def async_solution_handler(event: cp.SolutionEvent) -> None:
+        """Async solution handler that does some async work."""
+        solve_time = event.get('solveTime', 0.0)
+        call_order.append(('solution_start', solve_time))
+        # Simulate async work (e.g., writing to database, API call, etc.)
+        await asyncio.sleep(0.01)
+        results.solutions.append(event)
+        call_order.append(('solution_end', solve_time))
+
+    async def async_log_handler(msg: str) -> None:
+        """Async log handler."""
+        call_order.append(('log_start', len(results.logs)))
+        await asyncio.sleep(0.001)
+        results.logs.append(msg)
+        call_order.append(('log_end', len(results.logs)))
+
+    async def async_summary_handler(summary: cp.SolveSummary) -> None:
+        """Async summary handler."""
+        call_order.append('summary_start')
+        await asyncio.sleep(0.005)
+        call_order.append('summary_end')
+
+    solver = cp.Solver()
+    solver.output_stream = None
+    solver.on_solution = async_solution_handler  # type: ignore[assignment]
+    solver.on_log = async_log_handler  # type: ignore[assignment]
+    solver.on_summary = async_summary_handler  # type: ignore[assignment]
+
+    # Create a job shop model that will find multiple solutions
+    # This is a simplified version of the la17 problem from interactiveJobshop.ts
+    model = cp.Model(name='jobshop')
+    nb_machines = 3
+
+    # Job shop data: [machine_id, duration] pairs for each operation
+    # 3 jobs, 3 operations each
+    jobs_data = [
+        [0, 10, 1, 20, 2, 15],  # Job 0
+        [1, 15, 2, 10, 0, 25],  # Job 1
+        [2, 20, 0, 15, 1, 10],  # Job 2
+    ]
+
+    machines: list[list[cp.IntervalVar]] = [[] for _ in range(nb_machines)]
+    ends: list[cp.IntExpr] = []
+
+    for job_id, job_ops in enumerate(jobs_data):
+        prev: cp.IntervalVar | None = None
+        for op_id in range(nb_machines):
+            machine_id = job_ops[op_id * 2]
+            duration = job_ops[op_id * 2 + 1]
+            operation = model.interval_var(
+                length=duration,
+                name=f'J{job_id}O{op_id}M{machine_id}'
+            )
+            machines[machine_id].append(operation)
+            if prev is not None:
+                prev.end_before_start(operation)
+            prev = operation
+        if prev is not None:
+            ends.append(prev.end())
+
+    # No overlap on each machine
+    for machine in machines:
+        model.no_overlap(machine)
+
+    # Minimize makespan
+    model.minimize(model.max(ends))
+
+    # Solve with a short time limit and solution limit
+    params = cp.Parameters(timeLimit=2000)
+    result = await solver.solve(model, params=params)
+
+    # Verify that async handlers were called
+    assert len(results.solutions) > 0, "Should have received at least one solution"
+    assert len(results.logs) > 0, "Should have received log messages"
+    assert result.nb_solutions > 0, "Should have found at least one solution"
+
+    # Verify that async work happened (we should see interleaved start/end calls)
+    assert len(call_order) > 0, "Call order should be recorded"
+
+    # Check that we have both start and end events for solutions
+    solution_starts = [x for x in call_order if x[0] == 'solution_start']
+    solution_ends = [x for x in call_order if x[0] == 'solution_end']
+    assert len(solution_starts) == len(solution_ends), "Each solution start should have an end"
+    assert len(solution_starts) == len(results.solutions), "Should match number of solutions"
+
+    print(f"  ✓ Async solution handler called {len(results.solutions)} time(s)")
+    print(f"  ✓ Async log handler called {len(results.logs)} time(s)")
+    print(f"  ✓ Call order shows {len(call_order)} async operations")
+    print(f"  ✓ Result: {result}")
+
+    return True
+
+
+@pytest.mark.asyncio
+async def test_mixed_sync_async_handlers():
+    """Test that sync and async handlers can be mixed."""
+
+    results = RunResults()
+    sync_calls = []
+    async_calls = []
+
+    # Mix of sync and async handlers
+    def sync_log_handler(msg: str) -> None:
+        """Synchronous log handler."""
+        sync_calls.append('log')
+        results.logs.append(msg)
+
+    async def async_solution_handler(event: cp.SolutionEvent) -> None:
+        """Async solution handler."""
+        async_calls.append('solution')
+        await asyncio.sleep(0.001)
+        results.solutions.append(event)
+
+    def sync_summary_handler(summary: cp.SolveSummary) -> None:
+        """Synchronous summary handler."""
+        sync_calls.append('summary')
+
+    solver = cp.Solver()
+    solver.output_stream = None
+    solver.on_log = sync_log_handler  # Sync
+    solver.on_solution = async_solution_handler  # type: ignore[assignment] # Async
+    solver.on_summary = sync_summary_handler  # Sync
+
+    # Simple model
+    model = cp.Model()
+    x = model.interval_var(length=10, name='x')
+    model.minimize(x.start())
+
+    await solver.solve(model)
+
+    # Both sync and async handlers should have been called
+    assert len(sync_calls) > 0, "Sync handlers should have been called"
+    assert len(async_calls) > 0, "Async handlers should have been called"
+    assert len(results.solutions) > 0, "Async solution handler should have collected solutions"
+    assert len(results.logs) > 0, "Sync log handler should have collected logs"
+
+    print(f"  ✓ Sync handlers called {len(sync_calls)} time(s)")
+    print(f"  ✓ Async handlers called {len(async_calls)} time(s)")
+    print(f"  ✓ Mixed sync/async handlers work correctly")
+
+    return True
+
+@pytest.mark.asyncio
+async def test_async_callback_exception_propagation():
+    """Test that async callback exceptions propagate immediately."""
+    import time
+
+    # Use infeasible model that would run forever without time limit
+    model = cp.Model()
+    x = model.int_var(name="x")
+    y = model.int_var(name="y")
+    model.constraint(x < y)
+    model.constraint(y < x)
+
+    start_time = time.time()
+    exception_raised = False
+
+    async def bad_handler(msg):
+        # Raise exception immediately when first log message arrives
+        raise ValueError("Async callback error!")
+
+    solver = cp.Solver()
+    solver.output_stream = None
+    solver.on_log = bad_handler
+
+    try:
+        params = cp.Parameters(timeLimit=10)  # 10 seconds if exception doesn't work
+        result = await solver.solve(model, params=params)
+        assert False, "Should have raised exception"
+    except (ValueError, ExceptionGroup, BaseExceptionGroup) as e:
+        exception_raised = True
+        elapsed = time.time() - start_time
+        print(f"  ✓ Exception caught: {type(e).__name__}")
+        print(f"  ✓ Time elapsed: {elapsed:.2f}s")
+        assert elapsed < 2.0, f"Exception took too long to propagate: {elapsed:.2f}s"
+        print(f"  ✓ Exception propagated immediately (< 2s, not 10s)")
+
+    assert exception_raised, "Exception should have been raised"
+    return True
+
+@pytest.mark.asyncio
+async def test_sync_callback_exception_propagation():
+    """Test that sync callback exceptions propagate immediately."""
+    import time
+
+    # Use infeasible model that would run forever without time limit
+    model = cp.Model()
+    x = model.int_var(name="x")
+    y = model.int_var(name="y")
+    model.constraint(x < y)
+    model.constraint(y < x)
+
+    start_time = time.time()
+    exception_raised = False
+
+    def bad_handler(msg):
+        # Raise exception immediately when first log message arrives
+        raise ValueError("Sync callback error!")
+
+    solver = cp.Solver()
+    solver.output_stream = None
+    solver.on_log = bad_handler
+
+    try:
+        params = cp.Parameters(timeLimit=10)  # 10 seconds if exception doesn't work
+        result = await solver.solve(model, params=params)
+        assert False, "Should have raised exception"
+    except (ValueError, ExceptionGroup, BaseExceptionGroup) as e:
+        exception_raised = True
+        elapsed = time.time() - start_time
+        print(f"  ✓ Exception caught: {type(e).__name__}")
+        print(f"  ✓ Time elapsed: {elapsed:.2f}s")
+        assert elapsed < 2.0, f"Exception took too long to propagate: {elapsed:.2f}s"
+        print(f"  ✓ Exception propagated immediately (< 2s, not 10s)")
+
+    assert exception_raised, "Exception should have been raised"
+    return True

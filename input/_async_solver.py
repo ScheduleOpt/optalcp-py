@@ -4,10 +4,11 @@ Async solver with event handling.
 
 from __future__ import annotations
 import asyncio
+import inspect
 import json
 import os
 import sys
-from typing import Callable, Any, IO, final
+from typing import Callable, Any, IO, final, Awaitable
 from typing_extensions import TypedDict
 from ._model import Model
 from ._serialization import serialize_to_json
@@ -347,12 +348,12 @@ class Solver:
         self._output_stream = value
 
     @property
-    def on_log(self) -> Callable[[str], None] | None:
+    def on_log(self) -> Callable[[str], None] | Callable[[str], Awaitable[None]] | None:
         """
         Callback function for log messages from the solver.
 
         Called AFTER the log message is written to output_stream.
-        Set to None to disable (default). Must be a synchronous function.
+        Set to None to disable (default). Can be either a synchronous or asynchronous function.
 
         Args (callback signature):
             msg (str): The log message text.
@@ -365,21 +366,25 @@ class Solver:
             def log_handler(msg: str) -> None:
                 print(f"LOG: {msg}")
             solver.on_log = log_handler
+            # or async:
+            async def async_log_handler(msg: str) -> None:
+                await async_logger.info(msg)
+            solver.on_log = async_log_handler
             ```
         """
         return self._on_log
 
     @on_log.setter
-    def on_log(self, value: Callable[[str], None] | None) -> None:
+    def on_log(self, value: Callable[[str], None] | Callable[[str], Awaitable[None]] | None) -> None:
         self._on_log = value
 
     @property
-    def on_warning(self) -> Callable[[str], None] | None:
+    def on_warning(self) -> Callable[[str], None] | Callable[[str], Awaitable[None]] | None:
         """
         Callback function for warning messages from the solver.
 
         Called AFTER the warning is written to output_stream.
-        Set to None to disable (default). Must be a synchronous function.
+        Set to None to disable (default). Can be either a synchronous or asynchronous function.
 
         Args (callback signature):
             msg (str): The warning message text.
@@ -388,21 +393,25 @@ class Solver:
             ```python
             solver = Solver()
             solver.on_warning = lambda msg: warnings.warn(msg)
+            # or async:
+            async def async_warning_handler(msg: str) -> None:
+                await async_logger.warning(msg)
+            solver.on_warning = async_warning_handler
             ```
         """
         return self._on_warning
 
     @on_warning.setter
-    def on_warning(self, value: Callable[[str], None] | None) -> None:
+    def on_warning(self, value: Callable[[str], None] | Callable[[str], Awaitable[None]] | None) -> None:
         self._on_warning = value
 
     @property
-    def on_error(self) -> Callable[[str], None] | None:
+    def on_error(self) -> Callable[[str], None] | Callable[[str], Awaitable[None]] | None:
         """
         Callback function for error messages from the solver.
 
         Called for each error message. Errors are also written to sys.stderr.
-        Set to None to disable (default). Must be a synchronous function.
+        Set to None to disable (default). Can be either a synchronous or asynchronous function.
 
         Note: Errors from the solver are typically non-fatal (e.g., "parameter
         not supported in academic edition"). Fatal errors raise RuntimeError.
@@ -414,21 +423,25 @@ class Solver:
             ```python
             solver = Solver()
             solver.on_error = lambda msg: print(f"ERROR: {msg}", file=sys.stderr)
+            # or async:
+            async def async_error_handler(msg: str) -> None:
+                await async_logger.error(msg)
+            solver.on_error = async_error_handler
             ```
         """
         return self._on_error
 
     @on_error.setter
-    def on_error(self, value: Callable[[str], None] | None) -> None:
+    def on_error(self, value: Callable[[str], None] | Callable[[str], Awaitable[None]] | None) -> None:
         self._on_error = value
 
     @property
-    def on_solution(self) -> Callable[[SolutionEvent], None] | None:
+    def on_solution(self) -> Callable[[SolutionEvent], None] | Callable[[SolutionEvent], Awaitable[None]] | None:
         """
         Callback function for solution events from the solver.
 
         Called each time the solver finds a new solution.
-        Set to None to disable (default). Must be a synchronous function.
+        Set to None to disable (default). Can be either a synchronous or asynchronous function.
 
         Args (callback signature):
             event (SolutionEvent): Dictionary with keys:
@@ -445,6 +458,13 @@ class Solver:
 
             solver = Solver()
             solver.on_solution = handle_solution
+
+            # or async:
+            async def async_handle_solution(event: cp.SolutionEvent) -> None:
+                sol = event['solution']
+                await save_to_database(sol)
+
+            solver.on_solution = async_handle_solution
             ```
 
         See Also:
@@ -453,16 +473,16 @@ class Solver:
         return self._on_solution
 
     @on_solution.setter
-    def on_solution(self, value: Callable[[SolutionEvent], None] | None) -> None:
+    def on_solution(self, value: Callable[[SolutionEvent], None] | Callable[[SolutionEvent], Awaitable[None]] | None) -> None:
         self._on_solution = value
 
     @property
-    def on_lower_bound(self) -> Callable[[LowerBoundEntry], None] | None:
+    def on_lower_bound(self) -> Callable[[LowerBoundEntry], None] | Callable[[LowerBoundEntry], Awaitable[None]] | None:
         """
         Callback function for lower bound events from the solver.
 
         Called when the solver improves the lower bound on the objective.
-        Set to None to disable (default). Must be a synchronous function.
+        Set to None to disable (default). Can be either a synchronous or asynchronous function.
 
         Args (callback signature):
             event (LowerBoundEntry): Dictionary with keys:
@@ -473,6 +493,10 @@ class Solver:
             ```python
             solver = Solver()
             solver.on_lower_bound = lambda event: print(f"LB: {event['value']}")
+            # or async:
+            async def async_lb_handler(event: cp.LowerBoundEntry) -> None:
+                await update_dashboard(event['value'])
+            solver.on_lower_bound = async_lb_handler
             ```
 
         See Also:
@@ -481,16 +505,16 @@ class Solver:
         return self._on_lower_bound
 
     @on_lower_bound.setter
-    def on_lower_bound(self, value: Callable[[LowerBoundEntry], None] | None) -> None:
+    def on_lower_bound(self, value: Callable[[LowerBoundEntry], None] | Callable[[LowerBoundEntry], Awaitable[None]] | None) -> None:
         self._on_lower_bound = value
 
     @property
-    def on_summary(self) -> Callable[[SolveSummary], None] | None:
+    def on_summary(self) -> Callable[[SolveSummary], None] | Callable[[SolveSummary], Awaitable[None]] | None:
         """
         Callback function for solve completion event.
 
         Called once when the solve completes, providing final statistics.
-        Set to None to disable (default). Must be a synchronous function.
+        Set to None to disable (default). Can be either a synchronous or asynchronous function.
 
         Args (callback signature):
             summary (SolveSummary): Dictionary with solve statistics including:
@@ -508,6 +532,12 @@ class Solver:
 
             solver = Solver()
             solver.on_summary = handle_summary
+
+            # or async:
+            async def async_handle_summary(summary: cp.SolveSummary) -> None:
+                await save_stats_to_db(summary)
+
+            solver.on_summary = async_handle_summary
             ```
 
         See Also:
@@ -516,7 +546,7 @@ class Solver:
         return self._on_summary
 
     @on_summary.setter
-    def on_summary(self, value: Callable[[SolveSummary], None] | None) -> None:
+    def on_summary(self, value: Callable[[SolveSummary], None] | Callable[[SolveSummary], Awaitable[None]] | None) -> None:
         self._on_summary = value
 
     def __init__(self) -> None:
@@ -553,6 +583,30 @@ class Solver:
         self._best_solution_time: float | None = None
         self._best_lb_time: float | None = None
         self._best_solution_valid: bool | None = None
+        self._task_group: asyncio.TaskGroup | None = None
+
+    def _call_handler(self, handler: Callable[..., Any] | None, *args: Any) -> None:
+        """
+        Call a handler function, which may be sync or async, without blocking.
+
+        For async handlers, creates a task within the task group that runs concurrently.
+        Sync handlers are called immediately. This matches the TypeScript EventEmitter
+        behavior where emit() doesn't block on handlers.
+
+        Args:
+            handler: The callback function (sync or async), or None
+            *args: Arguments to pass to the handler
+        """
+        if handler is None:
+            return
+
+        if inspect.iscoroutinefunction(handler):
+            # Async handler - create task in group (automatically tracked and cleaned up)
+            if self._task_group is not None:
+                self._task_group.create_task(handler(*args))
+        else:
+            # Sync handler - call directly
+            handler(*args)
 
     async def _readline_unbounded(self, reader: asyncio.StreamReader) -> bytes:
         """
@@ -599,6 +653,7 @@ class Solver:
         self._best_solution_time = None
         self._best_lb_time = None
         self._best_solution_valid = None
+        self._task_group = None
 
         # Detect color support based on initial output_stream
         self._colors = _can_use_colors(self._output_stream)
@@ -675,8 +730,24 @@ class Solver:
             # Also, do not close stdin here - we may need to send additional messages
             # (e.g., solutions via send_solution()) during the solve
 
-            # Stream messages and handle events
-            summary_data = await self._process_messages()
+            # A wrapper to capture summary data from _process_messages in outer scope
+            summary_data = None
+            async def run_process_messages():
+                nonlocal summary_data
+                summary_data = await self._process_messages()
+
+            # Use TaskGroup to manage async handler tasks such as user's async callbacks
+            # Also run _process_messages() as a task so any exception in callbacks
+            # (async or sync) will immediately cancel message processing (and all tasks in the group)
+            async with asyncio.TaskGroup() as tg:
+                self._task_group = tg
+
+                # Run message processing as a task in the group
+                tg.create_task(run_process_messages())
+
+            # TaskGroup automatically waits for all tasks to complete here
+            # Reset task group to None so no new tasks can be created
+            self._task_group = None
 
             # Wait for process to finish
             return_code = await self._process.wait()
@@ -813,8 +884,7 @@ class Solver:
                     self.output_stream.write(data)
                     self.output_stream.flush()
 
-                if self.on_log:
-                    self.on_log(data)
+                self._call_handler(self.on_log, data)
 
             # Handle warning messages: write to output_stream, then call handler
             elif msg_type == 'warning':
@@ -824,9 +894,8 @@ class Solver:
                     self.output_stream.write(warning_text)
                     self.output_stream.flush()
 
-                if self.on_warning:
-                    # Pass the message itself
-                    self.on_warning(data)
+                # Pass the message itself
+                self._call_handler(self.on_warning, data)
 
             elif msg_type == 'error':
                 # Always write errors to stderr (Python convention for errors)
@@ -834,8 +903,7 @@ class Solver:
                 sys.stderr.flush()
 
                 # Then call user callback if provided
-                if self.on_error:
-                    self.on_error(data)
+                self._call_handler(self.on_error, data)
 
             elif msg_type == 'solution':
                 # Parse solution from data
@@ -860,17 +928,16 @@ class Solver:
                     self._best_solution_valid = data['verifiedOK']
 
                 # Call user handler with Solution object
-                if self.on_solution:
-                    # Create solution event dict similar to TypeScript API
-                    event: SolutionEvent = {
-                        'solveTime': data.get('solveTime'),
-                        'solution': solution
-                    }
-                    # Only include 'valid' if verification was performed
-                    if 'verifiedOK' in data:
-                        event['valid'] = data['verifiedOK']
+                # Create solution event dict similar to TypeScript API
+                event: SolutionEvent = {
+                    'solveTime': data.get('solveTime'),
+                    'solution': solution
+                }
+                # Only include 'valid' if verification was performed
+                if 'verifiedOK' in data:
+                    event['valid'] = data['verifiedOK']
 
-                    self.on_solution(event)
+                self._call_handler(self.on_solution, event)
 
             elif msg_type == 'lowerBound':
                 # Track in lower bound history
@@ -882,15 +949,13 @@ class Solver:
                 self._best_lb_time = data.get('solveTime')
 
                 # Call user callback if provided
-                if self.on_lower_bound:
-                    self.on_lower_bound(data)
+                self._call_handler(self.on_lower_bound, data)
 
             elif msg_type == 'summary':
                 summary_data = data
 
                 # Call on_summary callback if provided
-                if self.on_summary:
-                    self.on_summary(summary_data)
+                self._call_handler(self.on_summary, summary_data)
 
                 # Summary is the last message, we can stop
                 break
