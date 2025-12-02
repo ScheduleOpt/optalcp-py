@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "optalcp"
-version = "2025.11.1"
+version = "2025.11.2"
 description = "Python API for OptalCP constraint programming solver"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -26,7 +26,6 @@ classifiers = [
 
 dependencies = [
     "typing-extensions>=4.0.0",
-    "nest-asyncio>=1.5.0",
 ]
 
 [project.optional-dependencies]
@@ -39,6 +38,7 @@ dev = [
     "pytest-asyncio>=0.21.0",
     "mypy>=1.0",
     "pyright>=1.1.0",
+    "ruff>=0.8.0",
 ]
 
 [project.urls]
@@ -57,3 +57,11 @@ python_version = "3.11"
 warn_return_any = true
 warn_unused_configs = true
 disallow_untyped_defs = false
+
+[[tool.mypy.overrides]]
+module = "orjson"
+ignore_missing_imports = true
+
+[tool.pyright]
+reportMissingImports = "warning"
+reportMissingModuleSource = false

@@ -4,19 +4,37 @@ Core model classes for OptalCP Python API.
 
 from __future__ import annotations
 from collections.abc import Iterable
-from typing import Any
-from ._base_types import *
-from ._base_types import _wrap_int, _wrap_int_list, _wrap_bool, _wrap_int_matrix, Directive, _SearchDecision, _ScalarArgument, _Argument, _ElementProps, _PresenceStatus # type: ignore[reportUnusedImport]
-from ._int_var import IntVar
-from ._bool_var import BoolVar
-from ._interval_var import IntervalVar
-from ._sequence_var import SequenceVar
-from ._int_step_function import IntStepFunction
+from typing import Any, TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from ._result import SolveResult
+    from ._solution import Solution
+from ._expressions import (
+    # Constants
+    IntVarMax,
+    IntVarMin,
+    # Expression classes
+    Constraint,
+    IntExpr,
+    BoolExpr,
+    CumulExpr,
+    Directive,
+    _SearchDecision,
+    # Internal types
+    _ElementProps,
+    _Argument,
+    _wrap_int,
+    _wrap_int_list,
+    _wrap_bool,
+)
+from ._int_bool_var import IntVar, BoolVar
+from ._scheduling import IntervalVar, SequenceVar, IntStepFunction
 from ._parameters import Parameters
+from ._constants import _PresenceStatus
 
 
 class Model:
-    """
+    r"""
     *Model* captures the problem to be solved. It contains variables,
     constraints and objective function.
 
@@ -37,12 +55,12 @@ class Model:
 
     #### Basic integer expressions
 
-    * :meth:`Model.start_of`: start of an interval variable (optional integer expression).
-    * :meth:`Model.start_or`: start of an interval variable or a constant when it is *absent*.
-    * :meth:`Model.end_of`:   end of an interval variable (optional integer expression).
-    * :meth:`Model.end_or`:   end of an interval variable or a constant when it is *absent*.
-    * :meth:`Model.length_of`: length of an interval variable (optional integer expression).
-    * :meth:`Model.length_or`: length of an interval variable or a constant when it is *absent*.
+    * :meth:`Model.start`: start of an interval variable (optional integer expression).
+    * :meth:`Model.start_or_else`: start of an interval variable or a constant when it is *absent*.
+    * :meth:`Model.end`:   end of an interval variable (optional integer expression).
+    * :meth:`Model.end_or_else`:   end of an interval variable or a constant when it is *absent*.
+    * :meth:`Model.length`: length of an interval variable (optional integer expression).
+    * :meth:`Model.length_or_else`: length of an interval variable or a constant when it is *absent*.
     * :meth:`Model.guard`: replaces *absent* value by a constant.
 
     #### Integer arithmetics
@@ -150,7 +168,7 @@ class Model:
         self._name = name
         self._model: list[_Argument] = []  # Top-level constraints
         self._refs: list[_ElementProps] = []  # Nodes referenced by ID
-        self._objective: dict[str, Any] | None = None
+        self._objective: _ElementProps | None = None
         self._interval_vars: list[IntervalVar] = []
         self._int_vars: list[IntVar] = []
         self._bool_vars: list[BoolVar] = []
@@ -181,13 +199,40 @@ class Model:
             raise TypeError(f"Model name must be str or None, got {type(value).__name__}")
         self._name = value
 
+    def get_interval_vars(self) -> list[IntervalVar]:
+        """
+        Return a list of all interval variables in the model.
+
+        Returns:
+            A copy of the list of interval variables
+        """
+        return list(self._interval_vars)
+
+    def get_int_vars(self) -> list[IntVar]:
+        """
+        Return a list of all integer variables in the model.
+
+        Returns:
+            A copy of the list of integer variables
+        """
+        return list(self._int_vars)
+
+    def get_bool_vars(self) -> list[BoolVar]:
+        """
+        Return a list of all boolean variables in the model.
+
+        Returns:
+            A copy of the list of boolean variables
+        """
+        return list(self._bool_vars)
+
     def interval_var(self,
                      start: tuple[int, int] | None = None,
                      end: tuple[int, int] | None = None,
                      length: int | tuple[int, int] | None = None,
                      optional: bool = False,
                      name: str | None = None) -> IntervalVar:
-        """
+        r"""
         Creates a new interval variable and adds it to the model.
 
         :param params: Interval variable parameters with optional properties for start, end, length, optional, and name
@@ -251,7 +296,7 @@ class Model:
                 max: int = IntVarMax,
                 optional: bool = False,
                 name: str | None = None) -> IntVar:
-        """
+        r"""
         Creates a new integer variable and adds it to the model.
 
         :param params: Integer variable parameters with optional properties for range, optional flag, and name
@@ -338,14 +383,17 @@ class Model:
 
     def sequence_var(self,
                      intervals: Iterable[IntervalVar],
-                     types: Iterable[int] | None = None) -> SequenceVar:
-        """
+                     types: Iterable[int] | None = None,
+                     name: str | None = None) -> SequenceVar:
+        r"""
         Creates a sequence variable from the provided set of interval variables.
 
         :param intervals: Interval variables that will form the sequence in the solution
         :type intervals: IntervalVar[]
         :param types: Types of the intervals, used in particular for transition times
         :type types: number[]
+        :param name: Name assigned to the sequence variable
+        :type name: string
 
         :returns: The created sequence variable
         :rtype: SequenceVar
@@ -382,6 +430,8 @@ class Model:
             out_params.append(types_args)
 
         result = SequenceVar(self, "sequenceVar", out_params)
+        if name:
+            result.name = name
         self._model.append(result._as_arg())
         return result
 
@@ -410,7 +460,7 @@ class Model:
         return sequence
 
     def step_function(self, values: Iterable[tuple[int, int]]) -> IntStepFunction:
-        """
+        r"""
         Creates a new integer step function.
 
         :param values: An array of points defining the step function in the form [[x0, y0], [x1, y1], ..., [xn, yn]], where xi and yi are integers. The array must be sorted by xi
@@ -423,9 +473,9 @@ class Model:
         values in range :class:`IntVarMin` to :class:`IntVarMax`.  The function is
         defined as follows:
 
-        * $f(x) = 0$ for $x < x_0$,
-        * $f(x) = y_i$ for $x_i \leq x < x_{i+1}$
-        * $f(x) = y_n$ for $x \geq x_n$.
+        * :math:`f(x) = 0` for :math:`x < x_0`,
+        * :math:`f(x) = y_i` for :math:`x_i \leq x < x_{i+1}`
+        * :math:`f(x) = y_n` for :math:`x \geq x_n`.
 
         Step functions can be used in the following ways:
 
@@ -436,13 +486,22 @@ class Model:
         """
         return IntStepFunction(self, values)
 
-    def constraint(self, constraint: Constraint | BoolExpr | bool) -> None:
-        """#doc[Model.constraint]"""
-        if not isinstance(constraint, Constraint):
-            self._model.append(BoolExpr._wrap(constraint))
+    def add(self, constraint: Constraint | BoolExpr | bool | Iterable[Constraint | BoolExpr | bool]) -> None:
+        """#doc[Model.add]"""
+        if isinstance(constraint, (Constraint, BoolExpr, bool)):
+            if isinstance(constraint, Constraint):
+                self._model.append(constraint._as_arg())
+            else:
+                self._model.append(BoolExpr._wrap(constraint))
+        else:
+            for c in constraint:
+                if isinstance(c, Constraint):
+                    self._model.append(c._as_arg())
+                else:
+                    self._model.append(BoolExpr._wrap(c))
 
     def minimize(self, expr: IntExpr | int) -> None:
-        """
+        r"""
         Minimize the provided expression to find solution with minimal value.
 
         :param expr: The expression to minimize
@@ -465,7 +524,7 @@ class Model:
         }
 
     def maximize(self, expr: IntExpr | int) -> None:
-        """
+        r"""
         Maximize the provided expression to find solution with maximal value.
 
         :param expr: The expression to maximize
@@ -516,8 +575,31 @@ class Model:
 
         return result
 
+    def _from_dict(self, data: dict[str, Any]) -> None:
+        """Internal: Restore model from dictionary created by _to_dict()."""
+        # Restore the core model structure
+        self._refs = data['refs']
+        self._model = data['model']
+
+        # Restore optional fields
+        if 'name' in data:
+            self._name = data['name']
+
+        if 'objective' in data:
+            self._objective = data['objective']
+
+        # Reconstruct variable objects from refs
+        for i, props in enumerate(self._refs):
+            func = props.get('func')
+            if func == 'boolVar':
+                self._bool_vars.append(BoolVar(self, props, i))
+            elif func == 'intVar':
+                self._int_vars.append(IntVar(self, props, i))
+            elif func == 'intervalVar':
+                self._interval_vars.append(IntervalVar(self, props, i))
+
     def sum(self, args: Iterable[IntExpr | int | bool] | Iterable[CumulExpr]) -> IntExpr | int | CumulExpr:
-        """
+        r"""
         Creates in integer expression for the sum of the arguments.
 
         :param args: Array of integer expressions to sum.
@@ -556,6 +638,378 @@ class Model:
                 wrapped_args.append(IntExpr._wrap(e))  # type: ignore[arg-type]
             return IntExpr(self, "intSum", [wrapped_args])
 
+    def presence_of(self, arg: IntExpr | int | bool | IntervalVar) -> BoolExpr:
+        r"""
+        Creates a boolean expression that is true if the given argument is present in the solution.
+
+        :param arg: The argument to check for presence in the solution
+        :type arg: IntervalVar | IntExpr | int | bool
+
+        :returns: A boolean expression that is true if the argument is present in the solution.
+        :rtype: BoolExpr
+
+        The value of the expression remains unknown until a solution is found.
+        The expression can be used in a constraint to restrict possible solutions.
+
+        The function is equivalent to :meth:`IntervalVar.presence`
+        and :meth:`IntExpr.presence`.
+
+        In the following example, interval variables `x` and `y` must have the same presence status.
+        I.e. they must either be both *present* or both *absent*.
+
+        #### Simple constraints over presence
+
+        The solver treats binary constraints over presence in a special way: it
+        uses them to better propagate other constraints over the same pairs of variables.
+        Let's extend the previous example by a constraint that `x` must end before
+        `y` starts:
+
+        In this example, the solver sees (propagates) that the minimum start time of
+        `y` is 10 and maximum end time of `x` is 90.  Without the constraint over
+        `presence_of`, the solver could not propagate that because one
+        of the intervals can be *absent* and the other one *present* (and so the
+        value of `isBefore` would be *absent* and the constraint would be
+        satisfied).
+
+        To achieve good propagation, it is recommended to use binary
+        constraints over `presence_of` when possible. For example, multiple binary
+        constraints can be used instead of a single complicated constraint.
+        """
+        if isinstance(arg, IntervalVar):
+            return BoolExpr(self, "intervalPresenceOf", [IntervalVar._wrap(arg)])
+        return BoolExpr(self, "intPresenceOf", [IntExpr._wrap(arg)])
+
+    # =========================================================================
+    # Solving and serialization methods
+    # =========================================================================
+
+    def solve(self,
+              params: Parameters | None = None,
+              warm_start: "Solution | None" = None) -> "SolveResult":
+        r"""
+        Solves the model and returns the result.
+
+        :param params: The parameters for solving
+        :type params: Parameters
+        :param warm_start: The solution to start with
+        :type warm_start: Solution
+
+        :returns: The result of the solve.
+        :rtype: SolveResult
+
+        Solves the model using the OptalCP solver and returns the result. This is the
+        main entry point for solving constraint programming models.
+
+        The solver searches for solutions that satisfy all constraints in the model.
+        If an objective was specified (using :meth:`Model.minimize` or
+        :meth:`Model.maximize`), the solver searches for optimal or near-optimal
+        solutions within the given time limit.
+
+        The returned :class:`SolveResult` contains:
+
+        * `solution` - The best solution found, or `None` if no solution was found.
+          Use this to query variable values via methods like `get_start()`, `get_end()`,
+          and `get_value()`.
+        * `objective_value` - The objective value of the best solution (if an objective
+          was specified).
+        * `nb_solutions` - The total number of solutions found during the search.
+        * `proof` - Whether the solver proved optimality or infeasibility.
+        * `duration` - The total time spent solving.
+        * Statistics like `nb_branches`, `nb_fails`, and `nb_restarts`.
+
+        When an error occurs (e.g., invalid model, solver not found), the function
+        raises an exception.
+
+        ### Parameters
+
+        Solver behavior can be controlled via the `params` argument. Common parameters
+        include:
+
+        * `timeLimit` - Maximum solving time in seconds.
+        * `solutionLimit` - Stop after finding this many solutions.
+        * `nbWorkers` - Number of parallel threads to use.
+        * `searchType` - Search strategy (`"LNS"`, `"FDS"`, etc.).
+
+        See :class:`Parameters` for the complete list.
+
+        ### Warm start
+
+        If the `warm_start` parameter is specified, the solver will start with the
+        given solution. The solution must be compatible with the model; otherwise,
+        an error will be raised. The solver will take advantage of the
+        solution to speed up the search: it will search only for better solutions
+        (if it is a minimization or maximization problem). The solver may also try to
+        improve the provided solution by Large Neighborhood Search.
+
+        ### Advanced usage
+
+        This is a simple blocking function for basic usage. For advanced features
+        like event callbacks, progress monitoring, or async support, use the
+        :class:`Solver` class instead.
+
+        This method works seamlessly in both regular Python scripts and Jupyter
+        notebooks. In Jupyter (where an event loop is already running), it
+        automatically handles nested event loops.
+
+        .. rubric:: Example
+
+        .. code-block:: python
+
+            import optalcp as cp
+
+            model = cp.Model()
+            x = model.interval_var(length=10, name="task_x")
+            y = model.interval_var(length=20, name="task_y")
+            x.end_before_start(y)
+            model.minimize(y.end())
+
+            # Basic solve
+            result = model.solve()
+            print(f"Objective: {result.objective_value}")
+
+            # Solve with parameters
+            params = cp.Parameters(timeLimit=60, searchType="LNS")
+            result = model.solve(params)
+
+            # Solve with warm start
+            if result.solution:
+                result2 = model.solve(params, warm_start=result.solution)
+
+        .. seealso::
+
+            - :class:`Solver` for async solving with event callbacks.
+            - :class:`Parameters` for available solver parameters.
+            - :class:`SolveResult` for the result structure.
+            - :class:`Solution` for working with solutions.
+        """
+        from ._solver import Solver
+        return Solver()._sync_solve(self, params, warm_start)
+
+    def to_json(self,
+                params: Parameters | None = None,
+                warm_start: "Solution | None" = None) -> str:
+        r"""
+        Exports the model to JSON format.
+
+        :param params: Optional solver parameters to include
+        :type params: Parameters
+        :param warm_start: Optional initial solution to include
+        :type warm_start: Solution
+
+        :returns: A string containing the model in JSON format.
+        :rtype: string
+
+        The result can be stored in a file for later use. The model can be
+        converted back from JSON format using :meth:`from_json`.
+
+        .. rubric:: Example
+
+        .. code-block:: python
+
+            import optalcp as cp
+
+            model = cp.Model()
+            x = model.interval_var(length=10, name="task_x")
+            y = model.interval_var(length=20, name="task_y")
+            x.end_before_start(y)
+            model.minimize(y.end())
+
+            # Export to JSON
+            json_str = model.to_json()
+
+            # Save to file
+            with open("model.json", "w") as f:
+                f.write(json_str)
+
+            # Later, load from JSON
+            model2, params2, warm_start2 = cp.Model.from_json(json_str)
+
+        .. seealso::
+
+            - :meth:`from_json` to import from JSON.
+            - :meth:`to_txt` to export as text format.
+            - :meth:`to_js` to export as JavaScript code.
+        """
+        from ._result import _to_json_impl
+        return _to_json_impl(self, params, warm_start)
+
+    def to_txt(self,
+               params: Parameters | None = None,
+               warm_start: "Solution | None" = None) -> str:
+        r"""
+        Converts the model to text format similar to IBM CP Optimizer file format.
+
+        :param params: Optional solver parameters (mostly unused)
+        :type params: Parameters
+        :param warm_start: Optional initial solution to include
+        :type warm_start: Solution
+
+        :returns: Text representation of the model.
+        :rtype: string
+
+        The output is human-readable and can be stored in a file. Unlike JSON format,
+        there is no way to convert the text format back into a Model.
+
+        The result is so similar to the file format used by IBM CP Optimizer that,
+        under some circumstances, the result can be used as an input file for
+        CP Optimizer. However, some differences between OptalCP and CP Optimizer
+        make it impossible to guarantee the result is always valid for CP Optimizer.
+
+        Known issues:
+
+        * OptalCP supports optional integer expressions, while CP Optimizer does not.
+          If the model contains optional integer expressions, the result will not be
+          valid for CP Optimizer or may be badly interpreted. For example, to get
+          a valid CP Optimizer file, don't use `interval.start()`, use
+          `interval.start_or(default)` instead.
+        * For the same reason, prefer precedence constraints such as
+          `end_before_start()` over `model.constraint(x.end() <= y.start())`.
+        * Negative heights in cumulative expressions (e.g., in `step_at_start()`)
+          are not supported by CP Optimizer.
+
+        .. rubric:: Example
+
+        .. code-block:: python
+
+            import optalcp as cp
+
+            model = cp.Model()
+            x = model.interval_var(length=10, name="task_x")
+            y = model.interval_var(length=20, name="task_y")
+            x.end_before_start(y)
+            model.minimize(y.end())
+
+            # Convert to text format
+            text = model.to_txt()
+            print(text)
+
+            # Save to file
+            with open("model.txt", "w") as f:
+                f.write(text)
+
+        .. seealso::
+
+            - :meth:`to_js` to export as JavaScript code.
+            - :meth:`to_json` to export as JSON (can be imported back).
+        """
+        from ._solver import Solver
+        solver = Solver()
+        return solver._sync_to_text(self, params, warm_start)
+
+    def to_js(self,
+              params: Parameters | None = None,
+              warm_start: "Solution | None" = None) -> str:
+        r"""
+        Converts the model to equivalent JavaScript code.
+
+        :param params: Optional solver parameters (included in generated code)
+        :type params: Parameters
+        :param warm_start: Optional initial solution to include
+        :type warm_start: Solution
+
+        :returns: JavaScript code representing the model.
+        :rtype: string
+
+        The output is human-readable, executable with Node.js, and can be stored
+        in a file. It is meant as a way to export a model to a format that is
+        executable, human-readable, editable, and independent of other libraries.
+
+        This feature is experimental and the result is not guaranteed to be valid
+        in all cases.
+
+        .. rubric:: Example
+
+        .. code-block:: python
+
+            import optalcp as cp
+
+            model = cp.Model()
+            x = model.interval_var(length=10, name="task_x")
+            y = model.interval_var(length=20, name="task_y")
+            x.end_before_start(y)
+            model.minimize(y.end())
+
+            # Convert to JavaScript code
+            js_code = model.to_js()
+            print(js_code)
+
+            # Save to file
+            with open("model.js", "w") as f:
+                f.write(js_code)
+
+        .. seealso::
+
+            - :meth:`to_txt` to export as text format.
+            - :meth:`to_json` to export as JSON (can be imported back).
+        """
+        from ._solver import Solver
+        solver = Solver()
+        return solver._sync_to_js(self, params, warm_start)
+
+    @classmethod
+    def from_json(cls, json_str: str) -> "tuple[Model, Parameters | None, Solution | None]":
+        r"""
+        Creates a model from JSON format.
+
+        :param json_str: A string containing the model in JSON format
+        :type json_str: string
+
+        :returns: A tuple containing the model, optional parameters, and optional warm start solution.
+        :rtype: tuple[Model, Parameters | None, Solution | None]
+
+        Creates a new Model instance from a JSON string that was previously
+        exported using :meth:`to_json`.
+
+        The method returns a tuple with three elements:
+        1. The reconstructed Model
+        2. Parameters (if they were included in the JSON), or None
+        3. Warm start Solution (if it was included in the JSON), or None
+
+        Variables in the new model can be accessed using methods like
+        :meth:`Model.get_interval_vars`, :meth:`Model.get_int_vars`, etc.
+
+        .. rubric:: Example
+
+        .. code-block:: python
+
+            import optalcp as cp
+
+            # Create and export a model
+            model = cp.Model()
+            x = model.interval_var(length=10, name="task_x")
+            model.minimize(x.end())
+
+            params = cp.Parameters(timeLimit=60000)
+            json_str = model.to_json(params)
+
+            # Save to file
+            with open("model.json", "w") as f:
+                f.write(json_str)
+
+            # Later, load from file
+            with open("model.json", "r") as f:
+                json_str = f.read()
+
+            # Restore model, parameters, and warm start
+            model2, params2, warm_start2 = cp.Model.from_json(json_str)
+
+            # Access variables
+            interval_vars = model2.get_interval_vars()
+            print(f"Loaded model with {len(interval_vars)} interval variables")
+
+            # Solve with restored parameters
+            if params2:
+                result = model2.solve(params2)
+            else:
+                result = model2.solve()
+
+        .. seealso::
+
+            - :meth:`to_json` to export to JSON.
+        """
+        from ._result import _from_json_impl
+        return _from_json_impl(json_str)
+
     def _reusable_bool_expr(self, value: BoolExpr | bool) -> BoolExpr:
         out_params: list[_Argument] = [BoolExpr._wrap(value)]
         return BoolExpr(self, "reusableBoolExpr", out_params)
@@ -565,7 +1019,7 @@ class Model:
         return IntExpr(self, "reusableIntExpr", out_params)
 
     def not_(self, arg: BoolExpr | bool) -> BoolExpr:
-        """
+        r"""
         Negation of the boolean expression `arg`.
 
         :param arg: The boolean expression to negate.
@@ -582,7 +1036,7 @@ class Model:
         return BoolExpr(self, "boolNot", out_params)
 
     def or_(self, arg1: BoolExpr | bool, arg2: BoolExpr | bool) -> BoolExpr:
-        """
+        r"""
         Logical _OR_ of boolean expressions `arg1` and `arg2`.
 
         :param arg1: The first boolean expression.
@@ -601,7 +1055,7 @@ class Model:
         return BoolExpr(self, "boolOr", out_params)
 
     def and_(self, arg1: BoolExpr | bool, arg2: BoolExpr | bool) -> BoolExpr:
-        """
+        r"""
         Logical _AND_ of boolean expressions `arg1` and `arg2`.
 
         :param arg1: The first boolean expression.
@@ -620,7 +1074,7 @@ class Model:
         return BoolExpr(self, "boolAnd", out_params)
 
     def implies(self, arg1: BoolExpr | bool, arg2: BoolExpr | bool) -> BoolExpr:
-        """
+        r"""
         Logical implication of two boolean expressions, that is `arg1` implies `arg2`.
 
         :param arg1: The first boolean expression.
@@ -651,7 +1105,7 @@ class Model:
         return BoolExpr(self, "boolNand", out_params)
 
     def guard(self, arg: IntExpr | int | bool, absentValue: int | bool = 0) -> IntExpr:
-        """
+        r"""
         Creates an expression that replaces value _absent_ by a constant.
 
         :param arg: The integer expression to guard.
@@ -677,7 +1131,7 @@ class Model:
         return IntExpr(self, "intGuard", out_params)
 
     def identity(self, arg1: IntExpr | int | bool, arg2: IntExpr | int | bool) -> Constraint:
-        """
+        r"""
         Constraints `arg1` and `arg2` to be identical, including their presence status.
 
         :param arg1: The first integer expression.
@@ -696,7 +1150,7 @@ class Model:
         return Constraint(self, "intIdentity", out_params)
 
     def in_range(self, arg: IntExpr | int | bool, lb: int | bool, ub: int | bool) -> BoolExpr:
-        """
+        r"""
         Creates Boolean expression `lb` &le; `arg` &le; `ub`.
 
         :param arg: The integer expression to check.
@@ -723,7 +1177,7 @@ class Model:
         return BoolExpr(self, "intNotInRange", out_params)
 
     def abs(self, arg: IntExpr | int | bool) -> IntExpr:
-        """
+        r"""
         Creates an integer expression which is absolute value of `arg`.
 
         :param arg: The integer expression.
@@ -740,7 +1194,7 @@ class Model:
         return IntExpr(self, "intAbs", out_params)
 
     def min2(self, arg1: IntExpr | int | bool, arg2: IntExpr | int | bool) -> IntExpr:
-        """
+        r"""
         Creates an integer expression which is the minimum of `arg1` and `arg2`.
 
         :param arg1: The first integer expression.
@@ -759,7 +1213,7 @@ class Model:
         return IntExpr(self, "intMin2", out_params)
 
     def max2(self, arg1: IntExpr | int | bool, arg2: IntExpr | int | bool) -> IntExpr:
-        """
+        r"""
         Creates an integer expression which is the maximum of `arg1` and `arg2`.
 
         :param arg1: The first integer expression.
@@ -778,7 +1232,7 @@ class Model:
         return IntExpr(self, "intMax2", out_params)
 
     def max(self, args: Iterable[IntExpr | int | bool]) -> IntExpr:
-        """
+        r"""
         Creates an integer expression for the maximum of the arguments.
 
         :param args: Array of integer expressions to compute maximum of.
@@ -808,7 +1262,7 @@ class Model:
         return IntExpr(self, "intMax", out_params)
 
     def min(self, args: Iterable[IntExpr | int | bool]) -> IntExpr:
-        """
+        r"""
         Creates an integer expression for the minimum of the arguments.
 
         :param args: Array of integer expressions to compute minimum of.
@@ -865,8 +1319,8 @@ class Model:
         out_params: list[_Argument] = [IntExpr._wrap_list(lhs), IntExpr._wrap_list(rhs)]
         return Constraint(self, "intLexGt", out_params)
 
-    def start_of(self, interval: IntervalVar) -> IntExpr:
-        """
+    def start(self, interval: IntervalVar) -> IntExpr:
+        r"""
         Creates an integer expression for the start time of an interval variable.
 
         :param interval: The interval variable.
@@ -889,8 +1343,8 @@ class Model:
         out_params: list[_Argument] = [IntervalVar._wrap(interval)]
         return IntExpr(self, "startOf", out_params)
 
-    def end_of(self, interval: IntervalVar) -> IntExpr:
-        """
+    def end(self, interval: IntervalVar) -> IntExpr:
+        r"""
         Creates an integer expression for the end time of an interval variable.
 
         :param interval: The interval variable.
@@ -913,8 +1367,8 @@ class Model:
         out_params: list[_Argument] = [IntervalVar._wrap(interval)]
         return IntExpr(self, "endOf", out_params)
 
-    def length_of(self, interval: IntervalVar) -> IntExpr:
-        """
+    def length(self, interval: IntervalVar) -> IntExpr:
+        r"""
         Creates an integer expression for the duration (end - start) of an interval variable.
 
         :param interval: The interval variable.
@@ -937,8 +1391,8 @@ class Model:
         out_params: list[_Argument] = [IntervalVar._wrap(interval)]
         return IntExpr(self, "lengthOf", out_params)
 
-    def start_or(self, interval: IntervalVar, absentValue: int | bool) -> IntExpr:
-        """
+    def start_or_else(self, interval: IntervalVar, absentValue: int | bool) -> IntExpr:
+        r"""
         Creates an integer expression for the start time of the interval variable. If the interval is absent, then its value is `absentValue`.
 
         :param interval: The interval variable.
@@ -953,14 +1407,14 @@ class Model:
 
         .. seealso::
 
-            - :meth:`Model.start_or`
+            - :meth:`Model.start_or_else`
             - :meth:`Model.guard`
         """
         out_params: list[_Argument] = [IntervalVar._wrap(interval), _wrap_int(absentValue)]
         return IntExpr(self, "startOr", out_params)
 
-    def end_or(self, interval: IntervalVar, absentValue: int | bool) -> IntExpr:
-        """
+    def end_or_else(self, interval: IntervalVar, absentValue: int | bool) -> IntExpr:
+        r"""
         Creates an integer expression for the end time of the interval variable. If the interval is absent, then its value is `absentValue`.
 
         :param interval: The interval variable.
@@ -975,14 +1429,14 @@ class Model:
 
         .. seealso::
 
-            - :meth:`Model.end_or`
+            - :meth:`Model.end_or_else`
             - :meth:`Model.guard`
         """
         out_params: list[_Argument] = [IntervalVar._wrap(interval), _wrap_int(absentValue)]
         return IntExpr(self, "endOr", out_params)
 
-    def length_or(self, interval: IntervalVar, absentValue: int | bool) -> IntExpr:
-        """
+    def length_or_else(self, interval: IntervalVar, absentValue: int | bool) -> IntExpr:
+        r"""
         Creates an integer expression for the duration (end - start) of the interval variable. If the interval is absent, then its value is `absentValue`.
 
         :param interval: The interval variable.
@@ -997,7 +1451,7 @@ class Model:
 
         .. seealso::
 
-            - :meth:`Model.length_or`
+            - :meth:`Model.length_or_else`
             - :meth:`Model.guard`
         """
         out_params: list[_Argument] = [IntervalVar._wrap(interval), _wrap_int(absentValue)]
@@ -1008,7 +1462,7 @@ class Model:
         return IntExpr(self, "intAlternativeCost", out_params)
 
     def end_before_end(self, predecessor: IntervalVar, successor: IntervalVar, delay: IntExpr | int | bool = 0) -> Constraint:
-        """
+        r"""
         Creates a precedence constraint between two interval variables.
 
         :param predecessor: The predecessor interval variable.
@@ -1038,7 +1492,7 @@ class Model:
         return Constraint(self, "endBeforeEnd", out_params)
 
     def end_before_start(self, predecessor: IntervalVar, successor: IntervalVar, delay: IntExpr | int | bool = 0) -> Constraint:
-        """
+        r"""
         Creates a precedence constraint between two interval variables.
 
         :param predecessor: The predecessor interval variable.
@@ -1068,7 +1522,7 @@ class Model:
         return Constraint(self, "endBeforeStart", out_params)
 
     def start_before_end(self, predecessor: IntervalVar, successor: IntervalVar, delay: IntExpr | int | bool = 0) -> Constraint:
-        """
+        r"""
         Creates a precedence constraint between two interval variables.
 
         :param predecessor: The predecessor interval variable.
@@ -1098,7 +1552,7 @@ class Model:
         return Constraint(self, "startBeforeEnd", out_params)
 
     def start_before_start(self, predecessor: IntervalVar, successor: IntervalVar, delay: IntExpr | int | bool = 0) -> Constraint:
-        """
+        r"""
         Creates a precedence constraint between two interval variables.
 
         :param predecessor: The predecessor interval variable.
@@ -1128,7 +1582,7 @@ class Model:
         return Constraint(self, "startBeforeStart", out_params)
 
     def end_at_end(self, predecessor: IntervalVar, successor: IntervalVar, delay: IntExpr | int | bool = 0) -> Constraint:
-        """
+        r"""
         Creates a precedence constraint between two interval variables.
 
         :param predecessor: The predecessor interval variable.
@@ -1158,7 +1612,7 @@ class Model:
         return Constraint(self, "endAtEnd", out_params)
 
     def end_at_start(self, predecessor: IntervalVar, successor: IntervalVar, delay: IntExpr | int | bool = 0) -> Constraint:
-        """
+        r"""
         Creates a precedence constraint between two interval variables.
 
         :param predecessor: The predecessor interval variable.
@@ -1188,7 +1642,7 @@ class Model:
         return Constraint(self, "endAtStart", out_params)
 
     def start_at_end(self, predecessor: IntervalVar, successor: IntervalVar, delay: IntExpr | int | bool = 0) -> Constraint:
-        """
+        r"""
         Creates a precedence constraint between two interval variables.
 
         :param predecessor: The predecessor interval variable.
@@ -1218,7 +1672,7 @@ class Model:
         return Constraint(self, "startAtEnd", out_params)
 
     def start_at_start(self, predecessor: IntervalVar, successor: IntervalVar, delay: IntExpr | int | bool = 0) -> Constraint:
-        """
+        r"""
         Creates a precedence constraint between two interval variables.
 
         :param predecessor: The predecessor interval variable.
@@ -1248,7 +1702,7 @@ class Model:
         return Constraint(self, "startAtStart", out_params)
 
     def alternative(self, main: IntervalVar, options: Iterable[IntervalVar]) -> Constraint:
-        """
+        r"""
         Alternative constraint models a choice between different ways to execute an interval.
 
         :param main: The main interval variable.
@@ -1291,7 +1745,7 @@ class Model:
         return Constraint(self, "increasingIntervalVarElement", out_params)
 
     def itv_mapping(self, tasks: Iterable[IntervalVar], slots: Iterable[IntervalVar], indices: Iterable[IntExpr | int | bool]) -> Constraint:
-        """
+        r"""
         Maps tasks to slots according to indices, synchronizing each task with its assigned slot.
 
         :param tasks: Array of interval variables to map.
@@ -1315,45 +1769,54 @@ class Model:
 
         #### Formal definition
 
-        Let $T$ be the number of tasks (the length of the
-        array `tasks`). The number of the indices must also be $T$ (arrays `tasks` and
+        Let :math:`T` be the number of tasks (the length of the
+        array `tasks`). The number of the indices must also be :math:`T` (arrays `tasks` and
         `indices` must have the same length).  Let `tasks[t]` be one of the tasks, i.e.,
-        $\mathtt{t} \in \{0,1,\dots T-1\}$. Then `indices[t]` is the index of the slot
+        :math:`\mathtt{t} \in \{0,1,\dots T-1\}`. Then `indices[t]` is the index of the slot
         the task `tasks[t]` is assigned to.  Only present tasks are assigned:
-        $$
-        \mathtt{
-          \forall t \in \mathrm{ \{0,\dots,T-1\} }: \quad presenceOf(tasks[t]) \,\Leftrightarrow\, presenceOf(indices[t])
-        }
-        $$
+
+        .. math::
+
+            \mathtt{
+              \forall t \in \mathrm{ \{0,\dots,T-1\} }: \quad presenceOf(tasks[t]) \,\Leftrightarrow\, presenceOf(indices[t])
+            }
+
         Each task is synchronized with the slot to which it is assigned:
-        $$
-        \begin{aligned}
-        \mathtt{\forall t \in \mathrm{ \{0,\dots,T-1\} } \text{ such that } tasks[t] \ne \text{absent:}} \\
-            \mathtt{slots[indices[t]]} &\ne \textrm{absent} \\
-            \mathtt{startOf(tasks[t])} &= \mathtt{startOf(slots[indices[t]]) }\\
-            \mathtt{endOf(tasks[t])} &= \mathtt{endOf(slots[indices[t]])}
-        \end{aligned}
-        $$
+
+        .. math::
+
+            \begin{aligned}
+            \mathtt{\forall t \in \mathrm{ \{0,\dots,T-1\} } \text{ such that } tasks[t] \ne \text{absent:}} \\
+                \mathtt{slots[indices[t]]} &\ne \textrm{absent} \\
+                \mathtt{startOf(tasks[t])} &= \mathtt{startOf(slots[indices[t]]) }\\
+                \mathtt{endOf(tasks[t])} &= \mathtt{endOf(slots[indices[t]])}
+            \end{aligned}
+
         A slot is present if and only if there is a task assigned to it:
-        $$
-        \forall \mathtt{s} \in \{0,\dots,S-1\}:\;
-        \mathtt{presenceOf(tasks[s])} \;\Leftrightarrow\; (\exists \mathtt{t} \in 0,\dots,T-1: \mathtt{indices[t]=s})
-        $$
+
+        .. math::
+
+            \forall \mathtt{s} \in \{0,\dots,S-1\}:\;
+            \mathtt{presenceOf(tasks[s])} \;\Leftrightarrow\; (\exists \mathtt{t} \in 0,\dots,T-1: \mathtt{indices[t]=s})
+
         Absent slots are positioned at the end of the array:
-        $$
-        \mathtt{
-           \forall s \in \mathrm{ \{1,\dots,S-1\} }:\, presenceOf(slots[s]) \Rightarrow presenceOf(slots[s-1])
-        }
-        $$
+
+        .. math::
+
+            \mathtt{
+               \forall s \in \mathrm{ \{1,\dots,S-1\} }:\, presenceOf(slots[s]) \Rightarrow presenceOf(slots[s-1])
+            }
+
         Present slots are sorted by both start and end:
-        $$
-        \begin{aligned}
-        \mathtt{\forall s \in \mathrm{1,\dots,S-1} \text{ such that } slots[s] \ne \text{absent:}} \\
-            \mathtt{startOf(slots[s-1])} &\le \mathtt{startOf(slots[s]) }
-            \\
-            \mathtt{endOf(slots[s-1])} &\le \mathtt{endOf(slots[s])}
-        \end{aligned}
-        $$
+
+        .. math::
+
+            \begin{aligned}
+            \mathtt{\forall s \in \mathrm{1,\dots,S-1} \text{ such that } slots[s] \ne \text{absent:}} \\
+                \mathtt{startOf(slots[s-1])} &\le \mathtt{startOf(slots[s]) }
+                \\
+                \mathtt{endOf(slots[s-1])} &\le \mathtt{endOf(slots[s])}
+            \end{aligned}
 
         The amount of the propagation for this constraint can be controlled by parameter
         :meth:`Parameters.itvMappingPropagationLevel`.
@@ -1366,7 +1829,7 @@ class Model:
         return Constraint(self, "itvMapping", out_params)
 
     def span(self, main: IntervalVar, covered: Iterable[IntervalVar]) -> Constraint:
-        """
+        r"""
         Constraints an interval variable to span (cover) a set of other interval variables.
 
         :param main: The spanning interval variable.
@@ -1401,7 +1864,7 @@ class Model:
         return Constraint(self, "span", out_params)
 
     def position(self, interval: IntervalVar, sequence: SequenceVar) -> IntExpr:
-        """
+        r"""
         Creates an expression equal to the position of the `interval` on the `sequence`.
 
         :param interval: The interval variable.
@@ -1434,7 +1897,7 @@ class Model:
         return Constraint(self, "sameSequenceGroup", out_params)
 
     def pulse(self, interval: IntervalVar, height: IntExpr | int | bool) -> CumulExpr:
-        """
+        r"""
         Creates cumulative function (expression) _pulse_ for the given interval variable and height.
 
         :param interval: The interval variable.
@@ -1481,7 +1944,7 @@ class Model:
         return CumulExpr(self, "pulse", out_params)
 
     def step_at_start(self, interval: IntervalVar, height: IntExpr | int | bool) -> CumulExpr:
-        """
+        r"""
         Creates cumulative function (expression) that changes value at start of the interval variable by the given height.
 
         :param interval: The interval variable.
@@ -1494,7 +1957,7 @@ class Model:
 
         Cumulative *step* functions could be used to model a resource that is consumed or produced and, therefore, changes in amount over time. Examples of such a resource are a battery, an account balance, a product's stock, etc.
 
-        A `stepAtStart` can change the amount of such resource at the start of a given variable. The amount is changed by the given `height`, which can be positive or negative.
+        A `step_at_start` can change the amount of such resource at the start of a given variable. The amount is changed by the given `height`, which can be positive or negative.
 
         The `height` can be a constant value or an expression. In particular, the `height` can be given by an :class:`IntVar`. In such a case, the `height` is unknown at the time of the model creation but is determined during the search.
 
@@ -1517,7 +1980,7 @@ class Model:
 
         .. seealso::
 
-            - :meth:`IntervalVar.stepAtStart` is equivalent function on :class:`IntervalVar`.
+            - :meth:`IntervalVar.step_at_start` is equivalent function on :class:`IntervalVar`.
             - :meth:`Model.step_at_end`, :meth:`Model.step_at`, :meth:`Model.pulse` for other basic cumulative functions.
             - :meth:`Model.cumul_le` and :meth:`Model.cumul_ge` for constraints on cumulative functions.
         """
@@ -1525,7 +1988,7 @@ class Model:
         return CumulExpr(self, "stepAtStart", out_params)
 
     def step_at_end(self, interval: IntervalVar, height: IntExpr | int | bool) -> CumulExpr:
-        """
+        r"""
         Creates cumulative function (expression) that changes value at end of the interval variable by the given height.
 
         :param interval: The interval variable.
@@ -1538,7 +2001,7 @@ class Model:
 
         Cumulative *step* functions could be used to model a resource that is consumed or produced and, therefore, changes in amount over time. Examples of such a resource are a battery, an account balance, a product's stock, etc.
 
-        A `stepAtEnd` can change the amount of such resource at the end of a given variable. The amount is changed by the given `height`, which can be positive or negative.
+        A `step_at_end` can change the amount of such resource at the end of a given variable. The amount is changed by the given `height`, which can be positive or negative.
 
         The `height` can be a constant value or an expression. In particular, the `height` can be given by an :class:`IntVar`. In such a case, the `height` is unknown at the time of the model creation but is determined during the search.
 
@@ -1561,7 +2024,7 @@ class Model:
 
         .. seealso::
 
-            - :meth:`IntervalVar.stepAtEnd` is equivalent function on :class:`IntervalVar`.
+            - :meth:`IntervalVar.step_at_end` is equivalent function on :class:`IntervalVar`.
             - :meth:`Model.step_at_start`, :meth:`Model.step_at`, :meth:`Model.pulse` for other basic cumulative functions.
             - :meth:`Model.cumul_le` and :meth:`Model.cumul_ge` for constraints on cumulative functions.
         """
@@ -1569,7 +2032,7 @@ class Model:
         return CumulExpr(self, "stepAtEnd", out_params)
 
     def step_at(self, x: int | bool, height: IntExpr | int | bool) -> CumulExpr:
-        """
+        r"""
         Creates cumulative function (expression) that changes value at `x` by the given `height`. The height can be positive or negative, and it can be given by a constant or an expression (for example, by {@meth Model.intVar}).
 
         :param x: The point at which the cumulative function changes value.
@@ -1584,7 +2047,7 @@ class Model:
 
         #### Formal definition
 
-        `stepAt` creates a cumulative function which has the value:
+        `step_at` creates a cumulative function which has the value:
 
         * 0 before `x`,
         * `height` after `x`.
@@ -1598,7 +2061,7 @@ class Model:
         return CumulExpr(self, "stepAt", out_params)
 
     def cumul_sum(self, array: Iterable[CumulExpr]) -> CumulExpr:
-        """
+        r"""
         Sum of cumulative expressions.
 
         :param array: Array of cumulative expressions to sum.
@@ -1637,7 +2100,7 @@ class Model:
         return Constraint(self, "precedenceEnergyAfter", out_params)
 
     def step_function_sum(self, func: IntStepFunction, interval: IntervalVar) -> IntExpr:
-        """
+        r"""
         Computes sum of values of the step function `func` over the interval `interval`.
 
         :param func: The step function.
@@ -1664,7 +2127,7 @@ class Model:
         return Constraint(self, "intStepFunctionSumInRange", out_params)
 
     def step_function_eval(self, func: IntStepFunction, arg: IntExpr | int | bool) -> IntExpr:
-        """
+        r"""
         Evaluates a step function at a given point.
 
         :param func: The step function.
@@ -1696,7 +2159,7 @@ class Model:
         return Constraint(self, "intStepFunctionEvalNotInRange", out_params)
 
     def forbid_extent(self, interval: IntervalVar, func: IntStepFunction) -> Constraint:
-        """
+        r"""
         Forbid the interval variable to overlap with segments of the function where the value is zero.
 
         :param interval: The interval variable.
@@ -1707,7 +2170,7 @@ class Model:
         :returns: The constraint forbidding the extent (entire interval).
         :rtype: Constraint
 
-        This function prevents the specified interval variable from overlapping with segments of the step function where the value is zero. That is, if $[s, e)$ is a segment of the step function where the value is zero, then the interval variable either ends before $s$ ($\mathtt{interval.end()} \le s$) or starts after $e$ ($e \le \mathtt{interval.start()}$).
+        This function prevents the specified interval variable from overlapping with segments of the step function where the value is zero. That is, if :math:`[s, e)` is a segment of the step function where the value is zero, then the interval variable either ends before :math:`s` (:math:`\mathtt{interval.end()} \le s`) or starts after :math:`e` (:math:`e \le \mathtt{interval.start()}`).
 
         .. seealso::
 
@@ -1719,7 +2182,7 @@ class Model:
         return Constraint(self, "forbidExtent", out_params)
 
     def forbid_start(self, interval: IntervalVar, func: IntStepFunction) -> Constraint:
-        """
+        r"""
         Constrains the start of the interval variable to be outside of the zero-height segments of the step function.
 
         :param interval: The interval variable.
@@ -1744,7 +2207,7 @@ class Model:
         return Constraint(self, "forbidStart", out_params)
 
     def forbid_end(self, interval: IntervalVar, func: IntStepFunction) -> Constraint:
-        """
+        r"""
         Constrains the end of the interval variable to be outside of the zero-height segments of the step function.
 
         :param interval: The interval variable.

@@ -1,105 +1,61 @@
 """
-Core model classes for OptalCP Python API - Basic classes.
+Expression and element classes for OptalCP Python API.
+
+This module contains ModelElement and expression classes (IntExpr, BoolExpr, CumulExpr).
+Type definitions are in _types.py.
 """
 
 from __future__ import annotations
 from collections.abc import Iterable
-from typing import Any, TypedDict, TYPE_CHECKING
-from ._constants import _PresenceStatus, IntVarMin, IntVarMax, IntervalMin, IntervalMax, LengthMax # type: ignore[reportUnusedImport]
+from typing import TYPE_CHECKING
+from ._constants import (
+    IntVarMax,
+    IntVarMin,
+    IntervalMax,
+    IntervalMin,
+    LengthMax,
+)
+from ._types import (
+    _ElementProps,
+    _IndirectArgument,
+    _ScalarArgument,
+    _Argument,
+    _wrap_int,
+    _wrap_bool,
+    _wrap_int_list,
+    _wrap_int_matrix,
+)
 
 if TYPE_CHECKING:
     from ._model import Model
-    from ._int_step_function import IntStepFunction
+    from ._scheduling import IntStepFunction
 
-# Export public classes and constants for type checking
+# Re-export types and constants for backwards compatibility
 __all__ = [
-    # Classes
+    # Constants (from _constants.py)
+    'IntVarMax',
+    'IntVarMin',
+    'IntervalMax',
+    'IntervalMin',
+    'LengthMax',
+    # Types (from _types.py)
+    '_ElementProps',
+    '_IndirectArgument',
+    '_ScalarArgument',
+    '_Argument',
+    '_wrap_int',
+    '_wrap_bool',
+    '_wrap_int_list',
+    '_wrap_int_matrix',
+    # Expression classes
     'ModelElement',
     'Constraint',
     'IntExpr',
     'BoolExpr',
     'CumulExpr',
-    # Constants (re-exported from ._constants)
-    'IntVarMin',
-    'IntVarMax',
-    'IntervalMin',
-    'IntervalMax',
-    'LengthMax',
+    'Directive',
+    '_SearchDecision',
 ]
-
-
-# First define required fields
-class _ElementPropsRequired(TypedDict):
-    """Required properties that every model element must have."""
-    func: str  # Function name (e.g., "intervalVar", "plus", "endOf")
-    args: 'list[_Argument]'  # Forward reference to break circular dependency
-
-# Then extend with optional fields
-class _ElementProps(_ElementPropsRequired, total=False):
-    """
-    Properties of a model element for JSON serialization.
-    Inherits required fields (func, args) and adds optional fields.
-    """
-    # Optional fields
-    name: str
-    status: int  # PresenceStatus
-    # For IntVar and BoolVar:
-    min: int | bool
-    max: int | bool
-    # For IntervalVar:
-    startMin: int
-    startMax: int
-    endMin: int
-    endMax: int
-    lengthMin: int
-    lengthMax: int
-    # For IntStepFunction:
-    values: list[list[int]]
-
-class _IndirectArgument(TypedDict, total=False):
-    """Represents an indirect argument with optional 'arg' (ElementProps) or 'ref' (reference ID)."""
-    arg: _ElementProps  # Inlined expression
-    ref: int  # Reference ID
-
-_ScalarArgument = int | float | bool | _IndirectArgument
-_Argument = _ScalarArgument | list[_ScalarArgument] | list[list[int]]
-
-def _wrap_int(value: int | bool) -> _ScalarArgument:
-    """Internal: Ensure the value is an integer."""
-    if not isinstance(value, (int, bool)): # type: ignore[misc]
-        raise TypeError(f"Expected int or bool. Got {type(value).__name__}")
-    return value
-
-def _wrap_bool(value: bool) -> _ScalarArgument:
-    """Internal: Ensure the value is a boolean."""
-    if not isinstance(value, bool): # type: ignore[misc]
-        raise TypeError(f"Expected bool. Got {type(value).__name__}")
-    return value
-
-def _wrap_int_list(values: Iterable[int | bool]) -> list[_ScalarArgument]: # type: ignore[reportUnusedFunction]
-    """
-    Internal: Ensure the values are a list of integers.
-    Copy the array so that if the user changes it in the future, we are not affected by the change.
-    """
-    # Validate all elements first
-    for v in values:
-        if not isinstance(v, (int, bool)): # type: ignore[misc]
-            raise TypeError(f"Expected list of int or bool. Got {type(v).__name__}")
-    # Then make a shallow copy
-    return list(values)
-
-def _wrap_int_matrix(values: Iterable[Iterable[int | bool]]) -> _Argument: # type: ignore[reportUnusedFunction]
-    """
-    Internal: Ensure the values are a matrix (list of lists) of integers.
-    Copy the matrix so that if the user changes it in the future, we are not affected by the change.
-    """
-    # Validate all elements first
-    for row in values:
-        for v in row:
-            if not isinstance(v, (int, bool)): # type: ignore[misc]
-                raise TypeError(f"Expected list of list of int or bool. Got {type(v).__name__}")
-    # Then make a deep copy using list comprehensions
-    return [[int(v) for v in row] for row in values]
 
 
 class ModelElement:
@@ -185,14 +141,14 @@ class Constraint(ModelElement):
     Constraints are automatically added to the model when created.
     """
 
-    def __init__(self, model: Model, func: str, args: list[_Argument]):
-        super().__init__(model, func, args)
-        # Automatically add this constraint to the model
-        model._add_constraint(self)
+    def add(self) -> Constraint:
+        """#doc[Constraint.add]"""
+        self._model.add(self)
+        return self
 
 
 class IntExpr(ModelElement):
-    """
+    r"""
     A class that represents an integer expression in the model.  The expression
     may depend on the value of a variable (or variables), so the value of the
     expression is not known until a solution is found.
@@ -359,7 +315,7 @@ class IntExpr(ModelElement):
         return BoolExpr(self._model, "intPresenceOf", out_params)
 
     def guard(self, absentValue: int | bool = 0) -> IntExpr:
-        """
+        r"""
         Creates an expression that replaces value _absent_ by a constant.
 
         :param absentValue: The value to use when the expression is absent.
@@ -383,7 +339,7 @@ class IntExpr(ModelElement):
         return IntExpr(self._model, "intGuard", out_params)
 
     def identity(self, arg: IntExpr | int | bool) -> Constraint:
-        """
+        r"""
         Identity is different than equality. presence status.
 
         :param arg2: The second integer expression.
@@ -408,7 +364,7 @@ class IntExpr(ModelElement):
         return BoolExpr(self._model, "intNotInRange", out_params)
 
     def abs(self, ) -> IntExpr:
-        """
+        r"""
         Creates an integer expression which is absolute value of the expression.
 
         :returns: The resulting integer expression
@@ -422,7 +378,7 @@ class IntExpr(ModelElement):
         return IntExpr(self._model, "intAbs", out_params)
 
     def min2(self, arg: IntExpr | int | bool) -> IntExpr:
-        """
+        r"""
         Creates an integer expression which is the minimum of the expression and `arg`.
 
         :param arg2: The second integer expression.
@@ -439,7 +395,7 @@ class IntExpr(ModelElement):
         return IntExpr(self._model, "intMin2", out_params)
 
     def max2(self, arg: IntExpr | int | bool) -> IntExpr:
-        """
+        r"""
         Creates an integer expression which is the maximum of the expression and `arg`.
 
         :param arg2: The second integer expression.
@@ -459,7 +415,7 @@ class IntExpr(ModelElement):
 
 
 class BoolExpr(IntExpr):
-    """
+    r"""
     A class that represents a boolean expression in the model.
     The expression may depend on one or more variables; therefore, its value
     may be unknown until a solution is found.
@@ -551,12 +507,17 @@ class BoolExpr(IntExpr):
         """Reverse logical AND operator."""
         return BoolExpr(self._model, 'boolAnd', [_wrap_bool(other), self._as_arg()])
 
+    def add(self) -> BoolExpr:
+        """#doc[BoolExpr.add]"""
+        self._model.add(self)
+        return self
+
     def _reusable_bool_expr(self, ) -> BoolExpr:
         out_params: list[_Argument] = [self._as_arg()]
         return BoolExpr(self._model, "reusableBoolExpr", out_params)
 
     def not_(self, ) -> BoolExpr:
-        """
+        r"""
         Returns negation of the expression.
 
         :returns: The resulting Boolean expression
@@ -570,7 +531,7 @@ class BoolExpr(IntExpr):
         return BoolExpr(self._model, "boolNot", out_params)
 
     def or_(self, arg: BoolExpr | bool) -> BoolExpr:
-        """
+        r"""
         Returns logical _OR_ of the expression and `arg`.
 
         :param arg2: The second boolean expression.
@@ -587,7 +548,7 @@ class BoolExpr(IntExpr):
         return BoolExpr(self._model, "boolOr", out_params)
 
     def and_(self, arg: BoolExpr | bool) -> BoolExpr:
-        """
+        r"""
         Returns logical _AND_ of the expression and `arg`.
 
         :param arg2: The second boolean expression.
@@ -604,7 +565,7 @@ class BoolExpr(IntExpr):
         return BoolExpr(self._model, "boolAnd", out_params)
 
     def implies(self, arg: BoolExpr | bool) -> BoolExpr:
-        """
+        r"""
         Returns implication between the expression and `arg`.
 
         :param arg2: The second boolean expression.
@@ -636,7 +597,7 @@ class BoolExpr(IntExpr):
 
 
 class CumulExpr(ModelElement):
-    """
+    r"""
     Cumulative expression.
 
     Cumulative expression represents resource usage over time.  The resource
@@ -660,9 +621,9 @@ class CumulExpr(ModelElement):
     consumed or produced by some tasks (a *reservoir*).
     Steps can be created by functions
     :meth:`Model.step_at_start`,
-    :meth:`IntervalVar.stepAtStart`,
+    :meth:`IntervalVar.step_at_start`,
     :meth:`Model.step_at_end`,
-    :meth:`IntervalVar.stepAtEnd`. and
+    :meth:`IntervalVar.step_at_end`. and
     :meth:`Model.step_at`.
 
     Cumulative expressions can be combined using

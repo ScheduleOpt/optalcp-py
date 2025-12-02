@@ -6,22 +6,20 @@ A Pythonic interface to the OptalCP constraint programming solver.
 
 from __future__ import annotations
 
-__version__: str = '2025.11.1'
+__version__: str = '2025.11.2'
 
 # Import main classes
-from ._model import (
-    Model as Model,
+from ._model import Model as Model
+from ._expressions import (
     ModelElement as ModelElement,
-    IntVar as IntVar,
-    BoolVar as BoolVar,
-    IntervalVar as IntervalVar,
     IntExpr as IntExpr,
     BoolExpr as BoolExpr,
     Constraint as Constraint,
     CumulExpr as CumulExpr,
-    SequenceVar as SequenceVar,
-    IntStepFunction as IntStepFunction,
 )
+
+from ._int_bool_var import IntVar as IntVar, BoolVar as BoolVar
+from ._scheduling import IntervalVar as IntervalVar, SequenceVar as SequenceVar, IntStepFunction as IntStepFunction
 
 # Import constants
 from ._constants import (
@@ -33,19 +31,21 @@ from ._constants import (
 )
 
 # Import parameters
-from ._parameters import Parameters as Parameters, WorkerParameters as WorkerParameters
+from ._parameters import (
+    Parameters as Parameters,
+    WorkerParameters as WorkerParameters
+)
 
-# Import solver
-from ._solver import (
-    solve as solve,
+# Import solver result types and functions
+from ._result import (
     SolveResult as SolveResult,
     ObjectiveEntry as ObjectiveEntry,
     LowerBoundEntry as LowerBoundEntry,
+    SolveSummary as SolveSummary,
 )
-from ._async_solver import (
+from ._solver import (
     Solver as Solver,
     SolutionEvent as SolutionEvent,
-    SolveSummary as SolveSummary,
 )
 from ._solution import Solution as Solution
 
@@ -75,7 +75,6 @@ __all__: list[str] = [
     'Parameters',
     'WorkerParameters',
     # Solver
-    'solve',
     'Solver',
     'SolveResult',
     'Solution',

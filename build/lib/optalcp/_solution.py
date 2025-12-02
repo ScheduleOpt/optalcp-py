@@ -3,14 +3,33 @@
 """Solution class for OptalCP."""
 
 from __future__ import annotations
-from typing import Any, overload
-from ._interval_var import IntervalVar
-from ._int_var import IntVar
-from ._bool_var import BoolVar
+from typing import Any, NotRequired, TypedDict, overload, cast
+from ._scheduling import IntervalVar
+from ._int_bool_var import IntVar, BoolVar
 
+# Type definitions matching JSON sent by the solver.
+
+class IntervalValue(TypedDict):
+    """Value of an interval variable in a serialized solution."""
+    start: int
+    end: int
+
+class _SolutionVarValue(TypedDict):
+    """A single variable value in a serialized solution."""
+    id: int
+    value: None | int | IntervalValue
+
+class _SerializedSolution(TypedDict):
+    """
+    Serialized solution format from the solver.
+
+    Matches TypeScript type SerializedSolution from api.ts.
+    """
+    values: list[_SolutionVarValue]
+    objective: NotRequired[float | None]
 
 class Solution:
-    """
+    r"""
     Solution of a :class:`Model`. When a model is solved, the solution is stored
     in this object. The solution contains values of all variables in the model
     (including optional variables) and the value of the objective (if the model
@@ -24,11 +43,16 @@ class Solution:
 
     def __init__(self) -> None:
         """Create an empty solution where all variables are absent."""
-        self._values: dict[int, Any] = {}
-        self._objective: float | list[float | None] | None = None
+        # The values can be:
+        #   - None (absent variable)
+        #   - int (IntVar)
+        #   - bool (BoolVar)
+        #   - tuple[int, int] (IntervalVar: (start, end))
+        self._values: dict[int, (None | int | bool | tuple[int, int])] = {}
+        self._objective: float | None = None
 
-    def get_objective(self) -> float | list[float | None] | None:
-        """
+    def get_objective(self) -> float | None:
+        r"""
         Returns the objective value of the solution.
 
         :returns: The objective value
@@ -48,7 +72,7 @@ class Solution:
 
     def is_absent(self, variable: IntVar | BoolVar | IntervalVar) -> bool:
         """#doc[Solution.isAbsent]"""
-        return not variable._get_id() in self._values
+        return variable._get_id() not in self._values
 
     @overload
     def get_value(self, variable: IntVar) -> int | None: ...
@@ -71,7 +95,7 @@ class Solution:
         return result
 
     def get_start(self, variable: IntervalVar) -> int | None:
-        """
+        r"""
         Returns the start of the given interval variable in the solution.
 
         :returns: The start value
@@ -89,10 +113,10 @@ class Solution:
         value = self._values.get(variable._get_id())
         if value is None:
             return None
-        return value[0]
+        return cast(tuple[int, int], value)[0]
 
     def get_end(self, variable: IntervalVar) -> int | None:
-        """
+        r"""
         Returns the end of the given interval variable in the solution.
 
         :returns: The end value
@@ -110,10 +134,10 @@ class Solution:
         value = self._values.get(variable._get_id())
         if value is None:
             return None
-        return value[1]
+        return cast(tuple[int, int], value)[1]
 
     def set_objective(self, value: float | None) -> None:
-        """
+        r"""
         Sets objective value of the solution.
 
         :param value: The objective value to set
@@ -172,14 +196,14 @@ class Solution:
         # Remove from dict entirely
         self._values.pop(variable._get_id(), None)
 
-    def _init_from_dict(self, data: dict[str, Any]) -> None:
+    def _init_from_dict(self, data: _SerializedSolution) -> None:
         """
         Initialize solution from solver message data.
 
         Internal method used to deserialize solutions from the solver.
 
         Args:
-            data: Dictionary from solver containing 'values' and 'objective'.
+            data: Serialized solution from solver containing 'values' and 'objective'.
         """
         # Parse values array from solver
         # Format: [{"id": 0, "value": ...}, ...]
@@ -203,16 +227,16 @@ class Solution:
         # Parse objective
         self._objective = data.get('objective')
 
-    def _to_dict(self) -> dict[str, Any]:
+    def _to_dict(self) -> _SerializedSolution:
         """
         Serialize solution to dictionary for warm start.
 
         Internal method used to serialize solutions for the solver.
 
         Returns:
-            Dictionary with 'values' and 'objective' keys.
+            Serialized solution with 'values' and 'objective' keys.
         """
-        values_list: list[dict[str, Any]] = []
+        values_list: list[_SolutionVarValue] = []
 
         for var_id, value in self._values.items():
             if value is None:
@@ -220,7 +244,8 @@ class Solution:
                 pass
             elif isinstance(value, tuple) and len(value) == 2: # type: ignore[misc]
                 # IntervalVar - convert tuple to dict
-                values_list.append({"id": var_id, "value": {"start": value[0], "end": value[1]}})
+                interval_val: IntervalValue = {"start": value[0], "end": value[1]}
+                values_list.append({"id": var_id, "value": interval_val})
             elif isinstance(value, bool):
                 # BoolVar - convert to 0/1 for solver
                 values_list.append({"id": var_id, "value": 1 if value else 0})
@@ -228,7 +253,7 @@ class Solution:
                 # IntVar - store as-is
                 values_list.append({"id": var_id, "value": value})
 
-        result: dict[str, Any] = {"values": values_list}
+        result: _SerializedSolution = {"values": values_list}
         if self._objective is not None:
             result["objective"] = self._objective
 

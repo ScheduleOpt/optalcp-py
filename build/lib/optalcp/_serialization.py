@@ -29,7 +29,7 @@ def serialize_to_json(data: dict[str, Any]) -> bytes:
     """
     if HAS_ORJSON:
         # Fast path: orjson returns bytes directly
-        return orjson.dumps(data) # type: ignore[misc]
+        return orjson.dumps(data) # type: ignore[no-any-return]
     else:
         # Fallback: standard library json returns str, encode to bytes
         return json.dumps(data, separators=(',', ':')).encode('utf-8') # type: ignore[misc]

@@ -6,12 +6,22 @@ number of workers, and worker-specific settings.
 """
 
 from __future__ import annotations
-from typing import Optional, Any, Literal # type: ignore[reportUnusedImport]
+from typing import Any, Literal
 from dataclasses import dataclass, field, fields
+
+
+def _parse_infinities(obj: dict[str, Any]) -> None:
+    """Convert JSON infinity strings to Python float values."""
+    for key in obj:
+        if obj[key] == 'Infinity':
+            obj[key] = float('inf')
+        elif obj[key] == '-Infinity':
+            obj[key] = float('-inf')
+
 
 @dataclass(slots=True)
 class WorkerParameters:
-    """
+    r"""
     WorkerParameters specify the behavior of each worker separately.
     It is part of the :class:`Parameters` object.
 
@@ -546,9 +556,17 @@ class WorkerParameters:
         """Convert set parameters to a dictionary for JSON serialization."""
         return {f.name: getattr(self, f.name) for f in fields(self) if getattr(self, f.name) is not None}
 
+    def _from_dict(self, data: dict[str, Any]) -> None:
+        """Restore parameters from dictionary created by _to_dict()."""
+        _parse_infinities(data)
+        for key, value in data.items():
+            if hasattr(self, key):
+                setattr(self, key, value)
+
+
 @dataclass(slots=True)
 class Parameters:
-    """
+    r"""
     Parameters specify how the solver should behave.  For example, the
     number of workers (threads) to use, the time limit, etc.
 
@@ -680,6 +698,13 @@ class Parameters:
     The value of this parameter must be a power of 2. 
 
     The default value is 2048 means 2MB, which means that up to ~12MB can be wasted per worker in the worst case.
+    """
+
+    processExitTimeout: float | None = None
+    """
+    Timeout for solver process to exit after finishing
+
+    After the solver finishes, wait up to this many seconds for the process to exit. If it doesn't exit in time, it is silently killed. 
     """
 
     timeLimit: float | None = None
@@ -1260,6 +1285,23 @@ class Parameters:
         if len(self.workers) > 0:
             result['workers'] = [w._to_dict() for w in self.workers]
         return result
+
+    def _from_dict(self, data: dict[str, Any]) -> None:
+        """Restore parameters from dictionary created by _to_dict()."""
+        _parse_infinities(data)
+
+        # Handle workers separately
+        if 'workers' in data:
+            self.workers = []
+            for worker_data in data['workers']:
+                worker = WorkerParameters()
+                worker._from_dict(worker_data)
+                self.workers.append(worker)
+
+        # Set all other fields from the data
+        for key, value in data.items():
+            if key != 'workers' and hasattr(self, key):
+                setattr(self, key, value)
 
     # TODO: _to_dict can be documented function
     # TODO: A function / constructor from dict can be useful (user can have parameters stored in a JSON file).
