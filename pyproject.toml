@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "optalcp"
-version = "2025.11.2"
+version = "2025.12.0"
 description = "Python API for OptalCP constraint programming solver"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -34,11 +34,15 @@ fast = ["orjson>=3.9.0"]
 
 # Development dependencies
 dev = [
+    "setuptools>=61.0",
+    "pyyaml>=6.0",
+    "build>=1.0",
     "pytest>=7.0",
     "pytest-asyncio>=0.21.0",
     "mypy>=1.0",
     "pyright>=1.1.0",
     "ruff>=0.8.0",
+    "pydoclint>=0.5.0",
 ]
 
 [project.urls]
@@ -65,3 +69,42 @@ ignore_missing_imports = true
 [tool.pyright]
 reportMissingImports = "warning"
 reportMissingModuleSource = false
+
+[tool.ruff]
+target-version = "py311"
+respect-gitignore = false
+
+[tool.ruff.lint]
+select = [
+    "E",      # pycodestyle errors
+    "W",      # pycodestyle warnings
+    "F",      # Pyflakes (undefined names, unused imports)
+    "I",      # isort (import sorting)
+    "UP",     # pyupgrade (modern Python syntax)
+    "B",      # flake8-bugbear (common bugs)
+    "SIM",    # flake8-simplify (code simplification)
+    "RUF",    # Ruff-specific rules
+    "C4",     # flake8-comprehensions (better list/dict comprehensions)
+    "PIE",    # flake8-pie (misc. lints)
+    "PYI",    # flake8-pyi (type stub issues)
+    "TCH",    # flake8-type-checking (TYPE_CHECKING block optimization)
+    "PERF",   # Perflint (performance issues)
+]
+ignore = [
+    "E501",   # line too long (let formatter handle it)
+    "TCH",    # type-checking imports - too noisy for generated code
+    "RUF022", # __all__ not sorted - we use logical grouping
+    "PIE790", # unnecessary `...` - false positive for @overload methods with docstrings
+]
+
+[tool.ruff.lint.isort]
+known-first-party = ["optalcp"]
+
+[tool.ruff.lint.per-file-ignores]
+"__init__.py" = ["I001"]  # Don't enforce import sorting in __init__.py
+"input/*.py" = ["F401"]   # Unused imports used after code generation
+
+[tool.pydoclint]
+style = "sphinx"
+skip-checking-raises = true
+allow-init-docstring = true

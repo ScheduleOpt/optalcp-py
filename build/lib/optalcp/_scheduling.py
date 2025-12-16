@@ -8,26 +8,28 @@ This module contains:
 """
 
 from __future__ import annotations
+
 from collections.abc import Iterable
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, overload
+
+from ._constants import IntervalMax, LengthMax, _PresenceStatus
 from ._expressions import (
-    ModelElement,
-    IntExpr,
     BoolExpr,
-    CumulExpr,
     Constraint,
-    _ScalarArgument,
-    _ElementProps,
+    CumulExpr,
+    IntExpr,
+    ModelElement,
     _Argument,
+    _ElementProps,
+    _ScalarArgument,
     _wrap_int,
     _wrap_int_list,
     _wrap_int_matrix,
 )
-from ._constants import _PresenceStatus, IntervalMin, IntervalMax, LengthMax
 
 if TYPE_CHECKING:
+    from ._expressions import _Directive
     from ._model import Model
-    from ._expressions import Directive
 
 
 # =============================================================================
@@ -39,31 +41,19 @@ class IntStepFunction(ModelElement):
     Integer step function.
 
     Integer step function is a piecewise constant function defined on integer
-    values in range :class:`IntVarMin` to :class:`IntVarMax`. The function can be
+    values in range :const:`IntVarMin` to :const:`IntVarMax`. The function can be
     created by :meth:`Model.step_function`.
 
     Step functions can be used in the following ways:
 
-    * Function :meth:`Model.step_function_eval` evaluates the function at the given point (given as :class:`IntExpr`).
-    * Function :meth:`Model.step_function_sum` computes a sum (integral) of the function over an :class:`IntervalVar`.
+    * Function :meth:`Model.eval` evaluates the function at the given point (given as :class:`IntExpr`).
+    * Function :meth:`Model.integral` computes a sum (integral) of the function over an :class:`IntervalVar`.
     * Constraints :meth:`Model.forbid_start` and :meth:`Model.forbid_end` forbid the start/end of an :class:`IntervalVar` to be in a zero-value interval of the function.
     * Constraint :meth:`Model.forbid_extent` forbids the extent of an :class:`IntervalVar` to be in a zero-value interval of the function.
     """
 
     def __init__(self, model: Model, values: Iterable[tuple[int, int]]):
-        """
-        Create a new integer step function.
-
-        Args:
-            model: The model this function belongs to
-            values: Iterable of (value, next_point) pairs. Each pair defines that the function
-                   has the given value until next_point is reached. Both value and next_point
-                   must be integers.
-
-        Raises:
-            TypeError: If any item is not a pair of integers
-            ValueError: If any item does not have exactly 2 elements
-        """
+        # Internal constructor - users create step functions via Model.step_function()
         super().__init__(model, "intStepFunction", [])
 
         # Validate and copy the array so the user cannot change it later
@@ -71,9 +61,9 @@ class IntStepFunction(ModelElement):
         for i, item in enumerate(values):
             # Check if item is a sequence with exactly 2 elements
             if not hasattr(item, '__len__'):
-                raise ValueError(f"Step function item at index {i} must be a sequence of 2 integers (value, next_point), got non-sequence: {repr(item)}")
+                raise ValueError(f"Step function item at index {i} must be a sequence of 2 integers (value, next_point), got non-sequence: {item!r}")
             if len(item) != 2:
-                raise ValueError(f"Step function item at index {i} must have exactly 2 elements (value, next_point), got {len(item)}: {repr(item)}")
+                raise ValueError(f"Step function item at index {i} must have exactly 2 elements (value, next_point), got {len(item)}: {item!r}")
 
             # Extract the two values
             val, next_point = item
@@ -96,25 +86,60 @@ class IntStepFunction(ModelElement):
             return expr._as_arg()
         raise TypeError(f"Expected IntStepFunction. Got {type(expr).__name__}")
 
-    def step_function_sum(self, interval: IntervalVar) -> IntExpr:
-        """#doc[IntStepFunction.stepFunctionSum]"""
+    def integral(self, interval: IntervalVar) -> IntExpr:
+        r"""
+        Computes sum of values of the step function over the interval `interval`.
+
+        :param interval: The interval variable.
+        :type interval: IntervalVar
+        :rtype: IntExpr
+        :returns: The resulting integer expression
+
+        ## Details
+
+        The sum is computed over all integer time points from `interval.start()` to `interval.end()-1` inclusive. In other words, the sum includes the function value at the start time but excludes the value at the end time (half-open interval). If the interval variable has zero length, then the result is 0. If the interval variable is absent, then the result is *absent*.
+
+        **Requirement**: The step function `func` must be non-negative.
+
+        .. seealso::
+
+            - :meth:`Model.integral` for the equivalent function on :class:`Model`.
+        """
         out_params: list[_Argument] = [self._as_arg(), IntervalVar._wrap(interval)]
-        return IntExpr(self._model, "intStepFunctionSum", out_params)
+        return IntExpr(self._model, "intStepFunctionIntegral", out_params)
 
-    def _step_function_sum_in_range(self, interval: IntervalVar, lb: int | bool, ub: int | bool) -> Constraint:
+    def _step_function_integral_in_range(self, interval: IntervalVar, lb: int, ub: int) -> Constraint:
         out_params: list[_Argument] = [self._as_arg(), IntervalVar._wrap(interval), _wrap_int(lb), _wrap_int(ub)]
-        return Constraint(self._model, "intStepFunctionSumInRange", out_params)
+        return Constraint(self._model, "intStepFunctionIntegralInRange", out_params)
 
-    def step_function_eval(self, arg: IntExpr | int | bool) -> IntExpr:
-        """#doc[IntStepFunction.stepFunctionEval]"""
+    def eval(self, arg: IntExpr | int) -> IntExpr:
+        r"""
+        Evaluates the step function at a given point.
+
+        :param arg: The point at which to evaluate the step function.
+        :type arg: IntExpr | int
+        :rtype: IntExpr
+        :returns: The resulting integer expression
+
+        ## Details
+
+        The result is the value of the step function at the point `arg`. If the value of `arg` is `absent`, then the result is also `absent`.
+
+        By constraining the returned value, it is possible to limit `arg` to be only within certain segments of the segmented function. In particular, functions :meth:`Model.forbid_start` and :meth:`Model.forbid_end` work that way.
+
+        .. seealso::
+
+            - :meth:`Model.eval` for the equivalent function on :class:`Model`.
+            - :meth:`Model.forbid_start`, :meth:`Model.forbid_end` are convenience functions built on top of `eval`.
+        """
         out_params: list[_Argument] = [self._as_arg(), IntExpr._wrap(arg)]
         return IntExpr(self._model, "intStepFunctionEval", out_params)
 
-    def _step_function_eval_in_range(self, arg: IntExpr | int | bool, lb: int | bool, ub: int | bool) -> Constraint:
+    def _step_function_eval_in_range(self, arg: IntExpr | int, lb: int, ub: int) -> Constraint:
         out_params: list[_Argument] = [self._as_arg(), IntExpr._wrap(arg), _wrap_int(lb), _wrap_int(ub)]
         return Constraint(self._model, "intStepFunctionEvalInRange", out_params)
 
-    def _step_function_eval_not_in_range(self, arg: IntExpr | int | bool, lb: int | bool, ub: int | bool) -> Constraint:
+    def _step_function_eval_not_in_range(self, arg: IntExpr | int, lb: int, ub: int) -> Constraint:
         out_params: list[_Argument] = [self._as_arg(), IntExpr._wrap(arg), _wrap_int(lb), _wrap_int(ub)]
         return Constraint(self._model, "intStepFunctionEvalNotInRange", out_params)
 
@@ -129,18 +154,27 @@ class SequenceVar(ModelElement):
     r"""
     Models a sequence (order) of interval variables.
 
-    Sequence variable is used with :meth:`Model.no_overlap` constraint
-    to ensure that some interval variables do not overlap.
-    Such no-overlapping set of interval variables will form a sequence in the solution.
-    The sequence variable captures this order of interval variables
-    and allows additional constraints on the order to be stated.
+    A sequence variable represents an ordered arrangement of interval variables
+    where no two intervals overlap. The sequence captures not just that the intervals
+    don't overlap, but also their relative ordering in the solution.
+
+    Sequence variables are created using :meth:`Model.sequence_var` and are typically
+    used with the :meth:`SequenceVar.no_overlap` constraint to enforce non-overlapping
+    with optional transition times between intervals.
+
+    The position of each interval in the sequence can be queried using
+    :meth:`Model.position` or :meth:`IntervalVar.position`, which returns an integer
+    expression representing the interval's index in the final ordering (0-based).
+    Absent intervals have an absent position.
 
     .. seealso::
 
-        - :meth:`Model.position.`.
+        - :meth:`Model.sequence_var` to create sequence variables.
+        - :meth:`SequenceVar.no_overlap` for the no-overlap constraint with transitions.
+        - :meth:`Model.position` to get an interval's position in the sequence.
     """
 
-    def __init__(self, model: 'Model', func: str, args: list[_Argument]):
+    def __init__(self, model: Model, func: str, args: list[_Argument]):
         super().__init__(model, func, args)
         self._force_ref()
 
@@ -163,10 +197,11 @@ class SequenceVar(ModelElement):
         Constrain the interval variables forming the sequence to not overlap.
 
         :param transitions: 2D square array of minimum transition distances between the intervals. The first index is the type (index) of the first interval in the sequence, the second index is the type (index) of the second interval in the sequence
-        :type transitions: number[][]
-
-        :returns: The no-overlap constraint.
+        :type transitions: Iterable[Iterable[int]] | None
         :rtype: Constraint
+        :returns: The no-overlap constraint.
+
+        ## Details
 
         The `no_overlap` constraint makes sure that the intervals in the sequence
         do not overlap.  That is, for every pair of interval variables `x` and `y`
@@ -198,18 +233,16 @@ class SequenceVar(ModelElement):
         The size of the 2D array `transitions` must be equal to the number of types
         of the interval variables.
 
-        This constraint is the same as
-        :meth:`Model.no_overlap`.
-        Constraint
-        :meth:`Model.no_overlap`
-        is also the same but specifies the intervals directly instead of using
-        a sequence variable.
+        This constraint is equivalent to :meth:`Model.no_overlap` called with the
+        sequence variable's intervals and types.
+
+        ## Example
 
         A worker must perform a set of tasks. Each task is characterized by:
 
         * `length` of the task (how long it takes to perform it),
         * `location` of the task (where it must be performed),
-        * a time window `startMin` to `endMax` when the task must be performed.
+        * a time window `earliest` to `deadline` when the task must be performed.
 
         There are three locations, `0`, `1`, and `2`. The minimum travel times between
         the locations are given by a transition matrix `transitions`. Transition times
@@ -217,6 +250,45 @@ class SequenceVar(ModelElement):
         to location `1` but 15 minutes to travel back from location `1` to location `0`.
 
         We will model this problem using `no_overlap` constraint with transition times.
+
+        .. code-block:: python
+
+            import optalcp as cp
+
+            # Travel times between locations:
+            transitions = [
+              [ 0, 10, 10],
+              [15,  0, 10],
+              [ 5,  5,  0]
+            ]
+            # Tasks to be scheduled:
+            tasks = [
+              {"location": 0, "length": 20, "earliest": 0, "deadline": 100},
+              {"location": 0, "length": 40, "earliest": 70, "deadline": 200},
+              {"location": 1, "length": 10, "earliest": 0, "deadline": 200},
+              {"location": 1, "length": 30, "earliest": 100, "deadline": 200},
+              {"location": 1, "length": 10, "earliest": 0, "deadline": 150},
+              {"location": 2, "length": 15, "earliest": 50, "deadline": 250},
+              {"location": 2, "length": 10, "earliest": 20, "deadline": 60},
+              {"location": 2, "length": 20, "earliest": 110, "deadline": 250},
+            ]
+
+            model = cp.Model()
+
+            # From the array tasks create an array of interval variables:
+            task_vars = [model.interval_var(
+              name=f"Task{i}", length=t["length"], start=(t["earliest"], None), end=(None, t["deadline"])
+            ) for i, t in enumerate(tasks)]
+            # And an array of locations:
+            types = [t["location"] for t in tasks]
+
+            # Create the sequence variable for the tasks, location is the type:
+            sequence = model.sequence_var(task_vars, types)
+            # Tasks must not overlap and transitions must be respected:
+            sequence.no_overlap(transitions)
+
+            # Solve the model:
+            result = model.solve(cp.Parameters(solutionLimit=1))
         """
         if transitions is None:
             return Constraint(self._model, 'noOverlap', [self._as_arg()])
@@ -251,7 +323,7 @@ class IntervalVar(ModelElement):
     was not performed.  When the interval variable is absent, its start, end,
     and length are also absent.  A boolean expression that represents the presence
     of the interval variable can be accessed using
-    :meth:`IntervalVar.presence` and :meth:`Model.presence_of`.
+    :meth:`IntervalVar.presence` and :meth:`Model.presence`.
 
     Interval variables can be created using the function
     :meth:`Model.interval_var`.
@@ -259,13 +331,25 @@ class IntervalVar(ModelElement):
     To create an optional interval, specify `optional: true` in the
     arguments of the function.
 
-    @example: present interval variables
+    ## Example
 
     In the following example we create three present interval variables `x`, `y` and `z`
     and we make sure that they don't overlap.  Then, we minimize the maximum of
     the end times of the three intervals (the makespan):
 
-    @example: optional interval variables
+    .. code-block:: python
+
+        import optalcp as cp
+
+        model = cp.Model()
+        x = model.interval_var(length=10, name="x")
+        y = model.interval_var(length=10, name="y")
+        z = model.interval_var(length=10, name="z")
+        model.no_overlap([x, y, z])
+        model.minimize(model.max([x.end(), y.end(), z.end()]))
+        result = model.solve()
+
+    ## Example
 
     In the following example, there is a task *X* that could be performed by two
     different workers *A* and *B*.  The interval variable `X` represents the task.
@@ -277,8 +361,26 @@ class IntervalVar(ModelElement):
     `X`, `XA` and `XB` together and ensures that only one of `XA` and `XB` is present and that
     `X` and the present interval are equal.
 
+    .. code-block:: python
+
+        import optalcp as cp
+
+        model = cp.Model()
+        X = model.interval_var(length=10, name="X")
+        XA = model.interval_var(name="XA", optional=True)
+        XB = model.interval_var(name="XB", optional=True)
+        model.alternative(X, [XA, XB])
+        result = model.solve()
+
     Variables `XA` and `XB` can be used elsewhere in the model, e.g. to make sure
     that each worker is assigned to at most one task at a time:
+
+    .. code-block:: python
+
+        # Tasks of worker A don't overlap:
+        model.no_overlap([... , XA, ...])
+        # Tasks of worker B don't overlap:
+        model.no_overlap([... , XB, ...])
     """
 
     def __init__(self, model: Model, props: _ElementProps, ref_id: int | None = None):
@@ -302,160 +404,162 @@ class IntervalVar(ModelElement):
     def _wrap_list(exprs: Iterable[IntervalVar]) -> list[_ScalarArgument]:
         return [IntervalVar._wrap(e) for e in exprs]
 
-    def presence(self, ) -> BoolExpr:
-        """#doc[IntervalVar.presenceOf]"""
+    def presence(self) -> BoolExpr:
+        r"""
+        Creates a Boolean expression which is true if the interval variable is present.
+
+        :rtype: BoolExpr
+        :returns: A Boolean expression that is true if the interval variable is present in the solution.
+
+        ## Details
+
+        The resulting expression is never *absent*: it is `True` if the interval variable is *present* and `False` if the interval variable is *absent*.
+
+        This function is the same as :meth:`Model.presence`, see its documentation for more details.
+
+        ## Example
+
+        In the following example, interval variables `x` and `y` must have the same presence status.
+        I.e. they must either be both *present* or both *absent*.
+
+        .. code-block:: python
+
+            model = cp.Model()
+            x = model.interval_var(name="x", optional=True, length=10)
+            y = model.interval_var(name="y", optional=True, length=10)
+            model.enforce(x.presence() == y.presence())
+
+        .. seealso::
+
+            - :meth:`Model.presence` is the equivalent function on :class:`Model`.
+        """
         out_params: list[_Argument] = [self._as_arg()]
         return BoolExpr(self._model, "intervalPresenceOf", out_params)
 
-    def start(self, ) -> IntExpr:
+    def start(self) -> IntExpr:
         r"""
         Creates an integer expression for the start time of the interval variable.
 
-        :param interval: The interval variable.
-        :type interval: IntervalVar
-
-        :returns: The resulting integer expression
         :rtype: IntExpr
+        :returns: The resulting integer expression
+
+        ## Details
 
         If the interval variable is absent, then the resulting expression is also absent.
 
-        In the following example, we constraint interval variable `y` to start after the end of `y` with a delay of at least 10. In addition, we constrain the length of `x` to be less or equal to the length of `y`.
+        ## Example
+
+        In the following example, we constrain interval variable `y` to start after the end of `x` with a delay of at least 10. In addition, we constrain the length of `x` to be less or equal to the length of `y`.
+
+        .. code-block:: python
+
+            import optalcp as cp
+
+            model = cp.Model()
+            x = model.interval_var(name="x", ...)
+            y = model.interval_var(name="y", ...)
+            model.enforce(x.end() + 10 <= y.start())
+            model.enforce(x.length() <= y.length())
 
         When `x` or `y` is *absent* then value of both constraints above is *absent* and therefore they are satisfied.
 
         .. seealso::
 
             - :meth:`Model.start` is equivalent function on :class:`Model`.
-            - Function :meth:`IntervalVar.start_or_else` is a similar function that replaces value _absent_ by a constant.
         """
         out_params: list[_Argument] = [self._as_arg()]
         return IntExpr(self._model, "startOf", out_params)
 
-    def end(self, ) -> IntExpr:
+    def end(self) -> IntExpr:
         r"""
         Creates an integer expression for the end time of the interval variable.
 
-        :param interval: The interval variable.
-        :type interval: IntervalVar
-
-        :returns: The resulting integer expression
         :rtype: IntExpr
+        :returns: The resulting integer expression
+
+        ## Details
 
         If the interval variable is absent, then the resulting expression is also absent.
 
-        In the following example, we constraint interval variable `y` to start after the end of `y` with a delay of at least 10. In addition, we constrain the length of `x` to be less or equal to the length of `y`.
+        ## Example
+
+        In the following example, we constrain interval variable `y` to start after the end of `x` with a delay of at least 10. In addition, we constrain the length of `x` to be less or equal to the length of `y`.
+
+        .. code-block:: python
+
+            import optalcp as cp
+
+            model = cp.Model()
+            x = model.interval_var(name="x", ...)
+            y = model.interval_var(name="y", ...)
+            model.enforce(x.end() + 10 <= y.start())
+            model.enforce(x.length() <= y.length())
 
         When `x` or `y` is *absent* then value of both constraints above is *absent* and therefore they are satisfied.
 
         .. seealso::
 
             - :meth:`Model.end` is equivalent function on :class:`Model`.
-            - Function :meth:`IntervalVar.end_or_else` is a similar function that replaces value _absent_ by a constant.
         """
         out_params: list[_Argument] = [self._as_arg()]
         return IntExpr(self._model, "endOf", out_params)
 
-    def length(self, ) -> IntExpr:
+    def length(self) -> IntExpr:
         r"""
         Creates an integer expression for the duration (end - start) of the interval variable.
 
-        :param interval: The interval variable.
-        :type interval: IntervalVar
-
-        :returns: The resulting integer expression
         :rtype: IntExpr
+        :returns: The resulting integer expression
+
+        ## Details
 
         If the interval variable is absent, then the resulting expression is also absent.
 
-        In the following example, we constraint interval variable `y` to start after the end of `y` with a delay of at least 10. In addition, we constrain the length of `x` to be less or equal to the length of `y`.
+        ## Example
+
+        In the following example, we constrain interval variable `y` to start after the end of `x` with a delay of at least 10. In addition, we constrain the length of `x` to be less or equal to the length of `y`.
+
+        .. code-block:: python
+
+            import optalcp as cp
+
+            model = cp.Model()
+            x = model.interval_var(name="x", ...)
+            y = model.interval_var(name="y", ...)
+            model.enforce(x.end() + 10 <= y.start())
+            model.enforce(x.length() <= y.length())
 
         When `x` or `y` is *absent* then value of both constraints above is *absent* and therefore they are satisfied.
 
         .. seealso::
 
             - :meth:`Model.length` is equivalent function on :class:`Model`.
-            - Function :meth:`IntervalVar.length_or_else` is a similar function that replaces value _absent_ by a constant.
         """
         out_params: list[_Argument] = [self._as_arg()]
         return IntExpr(self._model, "lengthOf", out_params)
 
-    def start_or_else(self, absentValue: int | bool) -> IntExpr:
-        r"""
-        Creates an integer expression for the start time of the interval variable. If the interval is absent, then its value is `absentValue`.
-
-        :param absentValue: The value to use when the interval is absent.
-        :type absentValue: int
-
-        :returns: The resulting integer expression
-        :rtype: IntExpr
-
-        This function is equivalent to `interval.start().guard(absentValue)`.
-
-        .. seealso::
-
-            - :meth:`IntervalVar.start`
-            - :meth:`IntervalVar.guard`
-        """
-        out_params: list[_Argument] = [self._as_arg(), _wrap_int(absentValue)]
-        return IntExpr(self._model, "startOr", out_params)
-
-    def end_or_else(self, absentValue: int | bool) -> IntExpr:
-        r"""
-        Creates an integer expression for the end time of the interval variable. If the interval is absent, then its value is `absentValue`.
-
-        :param absentValue: The value to use when the interval is absent.
-        :type absentValue: int
-
-        :returns: The resulting integer expression
-        :rtype: IntExpr
-
-        This function is equivalent to `interval.end().guard(absentValue)`.
-
-        .. seealso::
-
-            - :meth:`IntervalVar.end`
-            - :meth:`IntervalVar.guard`
-        """
-        out_params: list[_Argument] = [self._as_arg(), _wrap_int(absentValue)]
-        return IntExpr(self._model, "endOr", out_params)
-
-    def length_or_else(self, absentValue: int | bool) -> IntExpr:
-        r"""
-        Creates an integer expression for the duration (end - start) of the interval variable. If the interval is absent, then its value is `absentValue`.
-
-        :param absentValue: The value to use when the interval is absent.
-        :type absentValue: int
-
-        :returns: The resulting integer expression
-        :rtype: IntExpr
-
-        This function is equivalent to `interval.length().guard(absentValue)`.
-
-        .. seealso::
-
-            - :meth:`IntervalVar.length`
-            - :meth:`IntervalVar.guard`
-        """
-        out_params: list[_Argument] = [self._as_arg(), _wrap_int(absentValue)]
-        return IntExpr(self._model, "lengthOr", out_params)
-
-    def _alternative_cost(self, options: Iterable[IntervalVar], weights: Iterable[int | bool]) -> IntExpr:
+    def _alternative_cost(self, options: Iterable[IntervalVar], weights: Iterable[int]) -> IntExpr:
         out_params: list[_Argument] = [self._as_arg(), IntervalVar._wrap_list(options), _wrap_int_list(weights)]
         return IntExpr(self._model, "intAlternativeCost", out_params)
 
-    def end_before_end(self, successor: IntervalVar, delay: IntExpr | int | bool = 0) -> Constraint:
+    def end_before_end(self, successor: IntervalVar, delay: IntExpr | int = 0) -> Constraint:
         r"""
         Creates a precedence constraint between two interval variables.
 
         :param successor: The successor interval variable.
         :type successor: IntervalVar
         :param delay: The minimum delay between intervals.
-        :type delay: IntExpr
-
-        :returns: The precedence constraint.
+        :type delay: IntExpr | int
         :rtype: Constraint
+        :returns: The precedence constraint.
+
+        ## Details
 
         Assuming that the current interval is `predecessor`, the constraint is the same as:
+
+        .. code-block:: python
+
+            predecessor.end() + delay <= successor.end()
 
         In other words, end of `predecessor` plus `delay` must be less than or equal to end of `successor`.
 
@@ -464,26 +568,29 @@ class IntervalVar(ModelElement):
         .. seealso::
 
             - :meth:`Model.end_before_end` is equivalent function on :class:`Model`.
-            - :meth:`Model.constraint`
             - :meth:`IntervalVar.start`, :meth:`IntervalVar.end`
-            - :meth:`IntExpr.le`
         """
         out_params: list[_Argument] = [self._as_arg(), IntervalVar._wrap(successor), IntExpr._wrap(delay)]
         return Constraint(self._model, "endBeforeEnd", out_params)
 
-    def end_before_start(self, successor: IntervalVar, delay: IntExpr | int | bool = 0) -> Constraint:
+    def end_before_start(self, successor: IntervalVar, delay: IntExpr | int = 0) -> Constraint:
         r"""
         Creates a precedence constraint between two interval variables.
 
         :param successor: The successor interval variable.
         :type successor: IntervalVar
         :param delay: The minimum delay between intervals.
-        :type delay: IntExpr
-
-        :returns: The precedence constraint.
+        :type delay: IntExpr | int
         :rtype: Constraint
+        :returns: The precedence constraint.
+
+        ## Details
 
         Assuming that the current interval is `predecessor`, the constraint is the same as:
+
+        .. code-block:: python
+
+            predecessor.end() + delay <= successor.start()
 
         In other words, end of `predecessor` plus `delay` must be less than or equal to start of `successor`.
 
@@ -492,26 +599,29 @@ class IntervalVar(ModelElement):
         .. seealso::
 
             - :meth:`Model.end_before_start` is equivalent function on :class:`Model`.
-            - :meth:`Model.constraint`
             - :meth:`IntervalVar.start`, :meth:`IntervalVar.end`
-            - :meth:`IntExpr.le`
         """
         out_params: list[_Argument] = [self._as_arg(), IntervalVar._wrap(successor), IntExpr._wrap(delay)]
         return Constraint(self._model, "endBeforeStart", out_params)
 
-    def start_before_end(self, successor: IntervalVar, delay: IntExpr | int | bool = 0) -> Constraint:
+    def start_before_end(self, successor: IntervalVar, delay: IntExpr | int = 0) -> Constraint:
         r"""
         Creates a precedence constraint between two interval variables.
 
         :param successor: The successor interval variable.
         :type successor: IntervalVar
         :param delay: The minimum delay between intervals.
-        :type delay: IntExpr
-
-        :returns: The precedence constraint.
+        :type delay: IntExpr | int
         :rtype: Constraint
+        :returns: The precedence constraint.
+
+        ## Details
 
         Assuming that the current interval is `predecessor`, the constraint is the same as:
+
+        .. code-block:: python
+
+            predecessor.start() + delay <= successor.end()
 
         In other words, start of `predecessor` plus `delay` must be less than or equal to end of `successor`.
 
@@ -520,26 +630,29 @@ class IntervalVar(ModelElement):
         .. seealso::
 
             - :meth:`Model.start_before_end` is equivalent function on :class:`Model`.
-            - :meth:`Model.constraint`
             - :meth:`IntervalVar.start`, :meth:`IntervalVar.end`
-            - :meth:`IntExpr.le`
         """
         out_params: list[_Argument] = [self._as_arg(), IntervalVar._wrap(successor), IntExpr._wrap(delay)]
         return Constraint(self._model, "startBeforeEnd", out_params)
 
-    def start_before_start(self, successor: IntervalVar, delay: IntExpr | int | bool = 0) -> Constraint:
+    def start_before_start(self, successor: IntervalVar, delay: IntExpr | int = 0) -> Constraint:
         r"""
         Creates a precedence constraint between two interval variables.
 
         :param successor: The successor interval variable.
         :type successor: IntervalVar
         :param delay: The minimum delay between intervals.
-        :type delay: IntExpr
-
-        :returns: The precedence constraint.
+        :type delay: IntExpr | int
         :rtype: Constraint
+        :returns: The precedence constraint.
+
+        ## Details
 
         Assuming that the current interval is `predecessor`, the constraint is the same as:
+
+        .. code-block:: python
+
+            predecessor.start() + delay <= successor.start()
 
         In other words, start of `predecessor` plus `delay` must be less than or equal to start of `successor`.
 
@@ -548,26 +661,29 @@ class IntervalVar(ModelElement):
         .. seealso::
 
             - :meth:`Model.start_before_start` is equivalent function on :class:`Model`.
-            - :meth:`Model.constraint`
             - :meth:`IntervalVar.start`, :meth:`IntervalVar.end`
-            - :meth:`IntExpr.le`
         """
         out_params: list[_Argument] = [self._as_arg(), IntervalVar._wrap(successor), IntExpr._wrap(delay)]
         return Constraint(self._model, "startBeforeStart", out_params)
 
-    def end_at_end(self, successor: IntervalVar, delay: IntExpr | int | bool = 0) -> Constraint:
+    def end_at_end(self, successor: IntervalVar, delay: IntExpr | int = 0) -> Constraint:
         r"""
         Creates a precedence constraint between two interval variables.
 
         :param successor: The successor interval variable.
         :type successor: IntervalVar
         :param delay: The minimum delay between intervals.
-        :type delay: IntExpr
-
-        :returns: The precedence constraint.
+        :type delay: IntExpr | int
         :rtype: Constraint
+        :returns: The precedence constraint.
+
+        ## Details
 
         Assuming that the current interval is `predecessor`, the constraint is the same as:
+
+        .. code-block:: python
+
+            predecessor.end() + delay == successor.end()
 
         In other words, end of `predecessor` plus `delay` must be equal to end of `successor`.
 
@@ -576,26 +692,29 @@ class IntervalVar(ModelElement):
         .. seealso::
 
             - :meth:`Model.end_at_end` is equivalent function on :class:`Model`.
-            - :meth:`Model.constraint`
             - :meth:`IntervalVar.start`, :meth:`IntervalVar.end`
-            - :meth:`IntExpr.eq`
         """
         out_params: list[_Argument] = [self._as_arg(), IntervalVar._wrap(successor), IntExpr._wrap(delay)]
         return Constraint(self._model, "endAtEnd", out_params)
 
-    def end_at_start(self, successor: IntervalVar, delay: IntExpr | int | bool = 0) -> Constraint:
+    def end_at_start(self, successor: IntervalVar, delay: IntExpr | int = 0) -> Constraint:
         r"""
         Creates a precedence constraint between two interval variables.
 
         :param successor: The successor interval variable.
         :type successor: IntervalVar
         :param delay: The minimum delay between intervals.
-        :type delay: IntExpr
-
-        :returns: The precedence constraint.
+        :type delay: IntExpr | int
         :rtype: Constraint
+        :returns: The precedence constraint.
+
+        ## Details
 
         Assuming that the current interval is `predecessor`, the constraint is the same as:
+
+        .. code-block:: python
+
+            predecessor.end() + delay == successor.start()
 
         In other words, end of `predecessor` plus `delay` must be equal to start of `successor`.
 
@@ -604,26 +723,29 @@ class IntervalVar(ModelElement):
         .. seealso::
 
             - :meth:`Model.end_at_start` is equivalent function on :class:`Model`.
-            - :meth:`Model.constraint`
             - :meth:`IntervalVar.start`, :meth:`IntervalVar.end`
-            - :meth:`IntExpr.eq`
         """
         out_params: list[_Argument] = [self._as_arg(), IntervalVar._wrap(successor), IntExpr._wrap(delay)]
         return Constraint(self._model, "endAtStart", out_params)
 
-    def start_at_end(self, successor: IntervalVar, delay: IntExpr | int | bool = 0) -> Constraint:
+    def start_at_end(self, successor: IntervalVar, delay: IntExpr | int = 0) -> Constraint:
         r"""
         Creates a precedence constraint between two interval variables.
 
         :param successor: The successor interval variable.
         :type successor: IntervalVar
         :param delay: The minimum delay between intervals.
-        :type delay: IntExpr
-
-        :returns: The precedence constraint.
+        :type delay: IntExpr | int
         :rtype: Constraint
+        :returns: The precedence constraint.
+
+        ## Details
 
         Assuming that the current interval is `predecessor`, the constraint is the same as:
+
+        .. code-block:: python
+
+            predecessor.start() + delay == successor.end()
 
         In other words, start of `predecessor` plus `delay` must be equal to end of `successor`.
 
@@ -632,26 +754,29 @@ class IntervalVar(ModelElement):
         .. seealso::
 
             - :meth:`Model.start_at_end` is equivalent function on :class:`Model`.
-            - :meth:`Model.constraint`
             - :meth:`IntervalVar.start`, :meth:`IntervalVar.end`
-            - :meth:`IntExpr.eq`
         """
         out_params: list[_Argument] = [self._as_arg(), IntervalVar._wrap(successor), IntExpr._wrap(delay)]
         return Constraint(self._model, "startAtEnd", out_params)
 
-    def start_at_start(self, successor: IntervalVar, delay: IntExpr | int | bool = 0) -> Constraint:
+    def start_at_start(self, successor: IntervalVar, delay: IntExpr | int = 0) -> Constraint:
         r"""
         Creates a precedence constraint between two interval variables.
 
         :param successor: The successor interval variable.
         :type successor: IntervalVar
         :param delay: The minimum delay between intervals.
-        :type delay: IntExpr
-
-        :returns: The precedence constraint.
+        :type delay: IntExpr | int
         :rtype: Constraint
+        :returns: The precedence constraint.
+
+        ## Details
 
         Assuming that the current interval is `predecessor`, the constraint is the same as:
+
+        .. code-block:: python
+
+            predecessor.start() + delay == successor.start()
 
         In other words, start of `predecessor` plus `delay` must be equal to start of `successor`.
 
@@ -660,9 +785,7 @@ class IntervalVar(ModelElement):
         .. seealso::
 
             - :meth:`Model.start_at_start` is equivalent function on :class:`Model`.
-            - :meth:`Model.constraint`
             - :meth:`IntervalVar.start`, :meth:`IntervalVar.end`
-            - :meth:`IntExpr.eq`
         """
         out_params: list[_Argument] = [self._as_arg(), IntervalVar._wrap(successor), IntExpr._wrap(delay)]
         return Constraint(self._model, "startAtStart", out_params)
@@ -672,27 +795,44 @@ class IntervalVar(ModelElement):
         Creates alternative constraints for the interval variable and provided `options`.
 
         :param options: The interval variables to choose from.
-        :type options: IntervalVar[]
-
-        :returns: The alternative constraint.
+        :type options: Iterable[IntervalVar]
         :rtype: Constraint
+        :returns: The alternative constraint.
 
-        This constraint is the same as :meth:`Model.alternative`.
+        ## Details
+
+        The alternative constraint requires that exactly one of the `options` intervals
+        is present when `self` is present. The selected option must have the same
+        start, end, and length as `self`. If `self` is absent, all options must be absent.
+
+        This is useful for modeling choices, such as assigning a task to one of several
+        machines, where each option represents the task executed on a different machine.
+
+        This constraint is equivalent to :meth:`Model.alternative` with `self` as the main interval.
         """
         out_params: list[_Argument] = [self._as_arg(), IntervalVar._wrap_list(options)]
         return Constraint(self._model, "alternative", out_params)
 
     def span(self, covered: Iterable[IntervalVar]) -> Constraint:
         r"""
-        Constraints the interval variable to span (cover) a set of other interval variables.
+        Constrains the interval variable to span (cover) a set of other interval variables.
 
         :param covered: The set of interval variables to cover.
-        :type covered: IntervalVar[]
-
-        :returns: The span constraint.
+        :type covered: Iterable[IntervalVar]
         :rtype: Constraint
+        :returns: The span constraint.
 
-        This constraint is the same as :meth:`Model.span`.
+        ## Details
+
+        The span constraint ensures that `self` exactly covers all present intervals
+        in `covered`. Specifically, `self` starts at the minimum start time and ends
+        at the maximum end time of the present covered intervals. If all covered
+        intervals are absent, `self` must also be absent.
+
+        This is useful for modeling composite tasks or projects where a parent interval
+        represents the overall duration of multiple sub-tasks.
+
+        This constraint is equivalent to :meth:`Model.span` with `self` as the spanning interval.
         """
         out_params: list[_Argument] = [self._as_arg(), IntervalVar._wrap_list(covered)]
         return Constraint(self._model, "span", out_params)
@@ -703,30 +843,38 @@ class IntervalVar(ModelElement):
 
         :param sequence: The sequence variable.
         :type sequence: SequenceVar
-
-        :returns: The resulting integer expression
         :rtype: IntExpr
+        :returns: The resulting integer expression
 
-        This function is the same as :meth:`Model.position`.
+        ## Details
+
+        Returns an integer expression representing the 0-based position of this interval
+        in the given sequence. The position reflects the order in which intervals appear
+        after applying the :meth:`SequenceVar.no_overlap` constraint.
+
+        If this interval is absent, the position expression is also absent.
+
+        This method is equivalent to :meth:`Model.position` with `self` as the interval.
         """
         out_params: list[_Argument] = [self._as_arg(), SequenceVar._wrap(sequence)]
         return IntExpr(self._model, "position", out_params)
 
-    def pulse(self, height: IntExpr | int | bool) -> CumulExpr:
+    def pulse(self, height: IntExpr | int) -> CumulExpr:
         r"""
         Creates cumulative function (expression) pulse for the interval variable and specified height.
 
         :param height: The height value.
-        :type height: IntExpr
-
-        :returns: The resulting cumulative expression
+        :type height: IntExpr | int
         :rtype: CumulExpr
+        :returns: The resulting cumulative expression
 
-        Creates cumulative function (expression) *pulse* for the interval variable and specified height.
+        ## Details
+
+        **Limitation:** The `height` must be non-negative. Pulses with negative height are not supported.
 
         This function is the same as :meth:`Model.pulse`.
 
-        .. rubric:: Example
+        ## Example
 
         .. code-block:: python
 
@@ -740,21 +888,22 @@ class IntervalVar(ModelElement):
         out_params: list[_Argument] = [self._as_arg(), IntExpr._wrap(height)]
         return CumulExpr(self._model, "pulse", out_params)
 
-    def step_at_start(self, height: IntExpr | int | bool) -> CumulExpr:
+    def step_at_start(self, height: IntExpr | int) -> CumulExpr:
         r"""
         Creates cumulative function (expression) that changes value at start of the interval variable by the given height.
 
         :param height: The height value.
-        :type height: IntExpr
-
-        :returns: The resulting cumulative expression
+        :type height: IntExpr | int
         :rtype: CumulExpr
+        :returns: The resulting cumulative expression
+
+        ## Details
 
         Creates cumulative function (expression) that changes value at start of the interval variable by the given height.
 
         This function is the same as :meth:`Model.step_at_start`.
 
-        .. rubric:: Example
+        ## Example
 
         .. code-block:: python
 
@@ -769,21 +918,22 @@ class IntervalVar(ModelElement):
         out_params: list[_Argument] = [self._as_arg(), IntExpr._wrap(height)]
         return CumulExpr(self._model, "stepAtStart", out_params)
 
-    def step_at_end(self, height: IntExpr | int | bool) -> CumulExpr:
+    def step_at_end(self, height: IntExpr | int) -> CumulExpr:
         r"""
         Creates cumulative function (expression) that changes value at end of the interval variable by the given height.
 
         :param height: The height value.
-        :type height: IntExpr
-
-        :returns: The resulting cumulative expression
+        :type height: IntExpr | int
         :rtype: CumulExpr
+        :returns: The resulting cumulative expression
+
+        ## Details
 
         Creates cumulative function (expression) that changes value at end of the interval variable by the given height.
 
         This function is the same as :meth:`Model.step_at_end`.
 
-        .. rubric:: Example
+        ## Example
 
         .. code-block:: python
 
@@ -798,31 +948,59 @@ class IntervalVar(ModelElement):
         out_params: list[_Argument] = [self._as_arg(), IntExpr._wrap(height)]
         return CumulExpr(self._model, "stepAtEnd", out_params)
 
-    def _precedence_energy_before(self, others: Iterable[IntervalVar], heights: Iterable[int | bool], capacity: int | bool) -> Constraint:
+    def _precedence_energy_before(self, others: Iterable[IntervalVar], heights: Iterable[int], capacity: int) -> Constraint:
         out_params: list[_Argument] = [self._as_arg(), IntervalVar._wrap_list(others), _wrap_int_list(heights), _wrap_int(capacity)]
         return Constraint(self._model, "precedenceEnergyBefore", out_params)
 
-    def _precedence_energy_after(self, others: Iterable[IntervalVar], heights: Iterable[int | bool], capacity: int | bool) -> Constraint:
+    def _precedence_energy_after(self, others: Iterable[IntervalVar], heights: Iterable[int], capacity: int) -> Constraint:
         out_params: list[_Argument] = [self._as_arg(), IntervalVar._wrap_list(others), _wrap_int_list(heights), _wrap_int(capacity)]
         return Constraint(self._model, "precedenceEnergyAfter", out_params)
 
     def forbid_extent(self, func: IntStepFunction) -> Constraint:
         r"""
-        This function prevents the specified interval variable from overlapping with segments of the step function where the value is zero. the value is zero.
+        This function prevents the specified interval variable from overlapping with segments of the step function where the value is zero.
 
         :param func: The step function.
         :type func: IntStepFunction
-
-        :returns: The constraint forbidding the extent (entire interval).
         :rtype: Constraint
+        :returns: The constraint forbidding the extent (entire interval).
+
+        ## Details
 
         This function prevents the specified interval variable from overlapping with segments of the step function where the value is zero. I.e., if :math:`[s, e)` is a segment of the step function where the value is zero, then the interval variable either ends before :math:`s` (:math:`\mathtt{interval.end()} \le s`) or starts after :math:`e` (:math:`e \le \mathtt{interval.start()}`).
+
+        ## Example
+
+        A production task that cannot overlap with scheduled maintenance windows:
+
+        .. code-block:: python
+
+            import optalcp as cp
+
+            model = cp.Model()
+
+            # A 3-hour production run
+            production = model.interval_var(length=3, name="production")
+
+            # Machine availability: 1 = available, 0 = under maintenance
+            availability = model.step_function([
+                (0, 1),   # Initially available
+                (8, 0),   # 8h: maintenance starts
+                (10, 1),  # 10h: maintenance ends
+            ])
+
+            # Production cannot overlap periods where availability is 0
+            production.forbid_extent(availability)
+            model.minimize(production.end())
+
+            result = model.solve()
+            # Production runs [0, 3) - finishes before maintenance window
 
         .. seealso::
 
             - :meth:`Model.forbid_extent` for the equivalent function on :class:`Model`.
             - :meth:`Model.forbid_start`, :meth:`Model.forbid_end` for similar functions that constrain the start/end of an interval variable.
-            - :meth:`Model.step_function_eval` for evaluation of a step function.
+            - :meth:`Model.eval` for evaluation of a step function.
         """
         out_params: list[_Argument] = [self._as_arg(), IntStepFunction._wrap(func)]
         return Constraint(self._model, "forbidExtent", out_params)
@@ -831,21 +1009,56 @@ class IntervalVar(ModelElement):
         r"""
         Constrains the start of an interval variable to not coincide with zero segments of a step function.
 
-        :param func: 
+        :param func: The step function whose zero segments define forbidden start times.
         :type func: IntStepFunction
-
-        :returns: The constraint forbidding the start point.
         :rtype: Constraint
+        :returns: The constraint forbidding the start point.
+
+        ## Details
 
         This function is equivalent to:
 
+        .. code-block:: python
+
+            model.enforce(func.eval(interval.start()) != 0)
+
         I.e., the function value at the start of the interval variable cannot be zero.
+
+        ## Example
+
+        A factory task that can only start during work hours (excluding breaks):
+
+        .. code-block:: python
+
+            import optalcp as cp
+
+            model = cp.Model()
+
+            # A 2-hour task on a machine
+            task = model.interval_var(length=2, name="task")
+
+            # Allowed start times: 1 = allowed, 0 = forbidden
+            # Morning shift 6-14h, but break at 10-11h when no new task can start
+            allowed_starts = model.step_function([
+                (0, 0),   # Before 6h: forbidden
+                (6, 1),   # 6h: shift starts, allowed
+                (10, 0),  # 10h: break, forbidden
+                (11, 1),  # 11h: break ends, allowed
+                (14, 0),  # 14h: shift ends, forbidden
+            ])
+
+            # Task cannot start when allowed_starts is 0
+            task.forbid_start(allowed_starts)
+            model.minimize(task.start())
+
+            result = model.solve()
+            # Task starts at 6 (earliest allowed start time)
 
         .. seealso::
 
             - :meth:`Model.forbid_start` for the equivalent function on :class:`Model`.
             - :meth:`Model.forbid_end` for similar function that constrains end an interval variable.
-            - :meth:`Model.step_function_eval` for evaluation of a step function.
+            - :meth:`Model.eval` for evaluation of a step function.
         """
         out_params: list[_Argument] = [self._as_arg(), IntStepFunction._wrap(func)]
         return Constraint(self._model, "forbidStart", out_params)
@@ -854,21 +1067,56 @@ class IntervalVar(ModelElement):
         r"""
         Constrains the end of an interval variable to not coincide with zero segments of a step function.
 
-        :param func: 
+        :param func: The step function whose zero segments define forbidden end times.
         :type func: IntStepFunction
-
-        :returns: The constraint forbidding the end point.
         :rtype: Constraint
+        :returns: The constraint forbidding the end point.
+
+        ## Details
 
         This function is equivalent to:
 
+        .. code-block:: python
+
+            model.enforce(func.eval(interval.end()) != 0)
+
         I.e., the function value at the end of the interval variable cannot be zero.
+
+        ## Example
+
+        A delivery task that must complete during business hours (not during lunch break):
+
+        .. code-block:: python
+
+            import optalcp as cp
+
+            model = cp.Model()
+
+            # A 1-hour delivery task
+            delivery = model.interval_var(length=1, name="delivery")
+
+            # Allowed end times: 1 = allowed, 0 = forbidden
+            # Business hours 9-17h, but deliveries cannot end during lunch 12-13h
+            allowed_ends = model.step_function([
+                (0, 0),   # Before 9h: forbidden
+                (9, 1),   # 9h: business opens, allowed
+                (12, 0),  # 12h: lunch break, forbidden
+                (13, 1),  # 13h: lunch ends, allowed
+                (17, 0),  # 17h: business closes, forbidden
+            ])
+
+            # Delivery cannot end when allowed_ends is 0
+            delivery.forbid_end(allowed_ends)
+            model.minimize(delivery.end())
+
+            result = model.solve()
+            # Delivery ends at 9 (starts at 8, ends at earliest allowed time)
 
         .. seealso::
 
             - :meth:`Model.forbid_end` for the equivalent function on :class:`Model`.
             - :meth:`Model.forbid_start` for similar function that constrains start an interval variable.
-            - :meth:`Model.step_function_eval` for evaluation of a step function.
+            - :meth:`Model.eval` for evaluation of a step function.
         """
         out_params: list[_Argument] = [self._as_arg(), IntStepFunction._wrap(func)]
         return Constraint(self._model, "forbidEnd", out_params)
@@ -877,21 +1125,22 @@ class IntervalVar(ModelElement):
         out_params: list[_Argument] = [self._as_arg(), IntervalVar._wrap(y)]
         return BoolExpr(self._model, "disjunctiveIsBefore", out_params)
 
-    def _related(self, y: IntervalVar) -> Directive:
+    def _related(self, y: IntervalVar) -> _Directive:
         out_params: list[_Argument] = [self._as_arg(), IntervalVar._wrap(y)]
-        return Directive(self._model, "related", out_params)
+        return _Directive(self._model, "related", out_params)
 
 
 
     # Presence status queries
     def is_optional(self) -> bool:
         r"""
-        Returns _true_ if the interval variable was created as _optional_.
+        Returns `True` if the interval variable was created as *optional*.
 
+        :rtype: bool
         :returns: True if the interval is optional
-        :rtype: boolean
 
-        Returns *true* if the interval variable was created as *optional*.
+        ## Details
+
         Optional interval variable can be *absent* in the solution, i.e., it can be omitted.
 
         **Note:** This function checks the presence status of the variable in the model
@@ -906,17 +1155,16 @@ class IntervalVar(ModelElement):
 
     def is_present(self) -> bool:
         r"""
-        Returns _true_ if the interval variable was created _present_ (and therefore cannot be _absent_ in the solution).
+        Returns `True` if the interval variable was created *present* (and therefore cannot be *absent* in the solution).
 
+        :rtype: bool
         :returns: True if the interval is present
-        :rtype: boolean
 
-        Returns *true* if the interval variable was created *present* (and
-        therefore cannot be *absent* in the solution).
+        ## Details
 
         **Note:** This function returns the presence status of the interval in the
         model (before the solve), not in the solution.  In particular, for an
-        optional interval variable, this function returns *false*, even though there
+        optional interval variable, this function returns `False`, even though there
         could be a solution in which the interval is *present*.
 
         .. seealso::
@@ -929,17 +1177,16 @@ class IntervalVar(ModelElement):
 
     def is_absent(self) -> bool:
         r"""
-        Returns _true_ if the interval variable was created _absent_ (and therefore cannot be _present_ in the solution).
+        Returns `True` if the interval variable was created *absent* (and therefore cannot be *present* in the solution).
 
+        :rtype: bool
         :returns: True if the interval is absent
-        :rtype: boolean
 
-        Returns *true* if the interval variable was created *absent* (and therefore
-        cannot be *present* in the solution).
+        ## Details
 
         **Note:** This function checks the presence status of the interval in the model
         (before the solve), not in the solution.  In particular, for an optional
-        interval variable, this function returns *false*, even though there could be
+        interval variable, this function returns `False`, even though there could be
         a solution in which the interval is *absent*.
 
         .. seealso::
@@ -952,36 +1199,38 @@ class IntervalVar(ModelElement):
     # Getters for domain bounds
     def get_start_min(self) -> int | None:
         r"""
-        Returns minimum start value assigned to the interval variable during its construction by {@meth Model.intervalVar} or later by function {@meth IntervalVar.setStart} or function {@meth IntervalVar.setStartMin}.
+        Returns the minimum start value assigned to the interval variable.
 
+        :rtype: int | None
         :returns: The start min value
-        :rtype: number | null
 
-        Returns minimum start value assigned to the interval variable during its
-        construction by :meth:`Model.interval_var` or later by
-        function :meth:`IntervalVar.set_start` or function :meth:`IntervalVar.set_start_min`.
+        ## Details
 
-        If the interval is absent, the function returns `null`.
+        The value is set during construction by :meth:`Model.interval_var` or later by
+        :meth:`IntervalVar.set_start` or :meth:`IntervalVar.set_start_min`.
+
+        If the interval is absent, the function returns `None`.
 
         **Note:** This function returns the minimum start of the interval in the
         model (before the solve), not in the solution.
         """
         if self.is_absent():
             return None
-        return self._props.get('startMin', IntervalMin)
+        return self._props.get('startMin', 0)
 
     def get_start_max(self) -> int | None:
         r"""
-        Returns maximum start value assigned to the interval variable during its construction by {@meth Model.intervalVar} or later by function {@meth IntervalVar.setStart} or function {@meth IntervalVar.setStartMax}.
+        Returns the maximum start value assigned to the interval variable.
 
+        :rtype: int | None
         :returns: The start max value
-        :rtype: number | null
 
-        Returns maximum start value assigned to the interval variable during its
-        construction by :meth:`Model.interval_var` or later by
-        function :meth:`IntervalVar.set_start` or function :meth:`IntervalVar.set_start_max`.
+        ## Details
 
-        If the interval is absent, the function returns `null`.
+        The value is set during construction by :meth:`Model.interval_var` or later by
+        :meth:`IntervalVar.set_start` or :meth:`IntervalVar.set_start_max`.
+
+        If the interval is absent, the function returns `None`.
 
         **Note:** This function returns the maximum start of the interval in the
         model (before the solve), not in the solution.
@@ -992,36 +1241,38 @@ class IntervalVar(ModelElement):
 
     def get_end_min(self) -> int | None:
         r"""
-        Returns minimum end assigned to the interval variable during its construction by {@meth Model.intervalVar} or later by function {@meth IntervalVar.setEnd} or function {@meth IntervalVar.setEndMin}.
+        Returns the minimum end value assigned to the interval variable.
 
+        :rtype: int | None
         :returns: The end min value
-        :rtype: number | null
 
-        Returns minimum end assigned to the interval variable during its
-        construction by :meth:`Model.interval_var` or later by
-        function :meth:`IntervalVar.set_end` or function :meth:`IntervalVar.set_end_min`.
+        ## Details
 
-        If the interval is absent, the function returns `null`.
+        The value is set during construction by :meth:`Model.interval_var` or later by
+        :meth:`IntervalVar.set_end` or :meth:`IntervalVar.set_end_min`.
+
+        If the interval is absent, the function returns `None`.
 
         **Note:** This function returns the minimum end of the interval in the
         model (before the solve), not in the solution.
         """
         if self.is_absent():
             return None
-        return self._props.get('endMin', IntervalMin)
+        return self._props.get('endMin', 0)
 
     def get_end_max(self) -> int | None:
         r"""
-        Returns maximum end assigned to the interval variable during its construction by {@meth Model.intervalVar} or later by function {@meth IntervalVar.setEnd} or function {@meth IntervalVar.setEndMax}.
+        Returns the maximum end value assigned to the interval variable.
 
+        :rtype: int | None
         :returns: The end max value
-        :rtype: number | null
 
-        Returns maximum end assigned to the interval variable during its
-        construction by :meth:`Model.interval_var` or later by
-        function :meth:`IntervalVar.set_end` or function :meth:`IntervalVar.set_end_max`.
+        ## Details
 
-        If the interval is absent, the function returns `null`.
+        The value is set during construction by :meth:`Model.interval_var` or later by
+        :meth:`IntervalVar.set_end` or :meth:`IntervalVar.set_end_max`.
+
+        If the interval is absent, the function returns `None`.
 
         **Note:** This function returns the maximum end of the interval in the
         model (before the solve), not in the solution.
@@ -1032,16 +1283,17 @@ class IntervalVar(ModelElement):
 
     def get_length_min(self) -> int | None:
         r"""
-        Returns minimum length assigned to the interval variable during its construction by {@meth Model.intervalVar} or later by function {@meth IntervalVar.setLength} or function {@meth IntervalVar.setLengthMin}.
+        Returns the minimum length value assigned to the interval variable.
 
+        :rtype: int | None
         :returns: The length min value
-        :rtype: number | null
 
-        Returns minimum length assigned to the interval variable during its
-        construction by :meth:`Model.interval_var` or later by
-        function :meth:`IntervalVar.set_length` or function :meth:`IntervalVar.set_length_min`.
+        ## Details
 
-        If the interval is absent, the function returns `null`.
+        The value is set during construction by :meth:`Model.interval_var` or later by
+        :meth:`IntervalVar.set_length` or :meth:`IntervalVar.set_length_min`.
+
+        If the interval is absent, the function returns `None`.
 
         **Note:** This function returns the minimum length of the interval in the
         model (before the solve), not in the solution.
@@ -1052,16 +1304,17 @@ class IntervalVar(ModelElement):
 
     def get_length_max(self) -> int | None:
         r"""
-        Returns the maximum length assigned to the interval variable during its construction by {@meth Model.intervalVar} or later by function {@meth IntervalVar.setLength} or function {@meth IntervalVar.setLengthMax}.
+        Returns the maximum length value assigned to the interval variable.
 
+        :rtype: int | None
         :returns: The length max value
-        :rtype: number | null
 
-        Returns the maximum length assigned to the interval variable during its
-        construction by :meth:`Model.interval_var` or later by
-        function :meth:`IntervalVar.set_length` or function :meth:`IntervalVar.set_length_max`.
+        ## Details
 
-        If the interval is absent, the function returns `null`.
+        The value is set during construction by :meth:`Model.interval_var` or later by
+        :meth:`IntervalVar.set_length` or :meth:`IntervalVar.set_length_max`.
+
+        If the interval is absent, the function returns `None`.
 
         **Note:** This function returns the maximum length of the interval in the
         model (before the solve), not in the solution.
@@ -1074,9 +1327,6 @@ class IntervalVar(ModelElement):
     def make_optional(self) -> None:
         r"""
         Makes the interval variable optional.
-
-        :returns: Returns the interval variable itself to allow chaining.
-        :rtype: IntervalVar
 
         Optional interval variable can be *absent* in the solution i.e. can be omitted.
 
@@ -1093,9 +1343,6 @@ class IntervalVar(ModelElement):
         r"""
         Makes the interval variable present.
 
-        :returns: Returns the interval variable itself to allow chaining.
-        :rtype: IntervalVar
-
         The present interval variable cannot be *absent* in the solution, i.e., cannot be omitted.
 
         It is equivalent to setting `optional: false` in :meth:`Model.interval_var`.
@@ -1111,11 +1358,7 @@ class IntervalVar(ModelElement):
         r"""
         Makes the interval variable absent.
 
-        :returns: Returns the interval variable itself to allow chaining.
-        :rtype: IntervalVar
-
-        Absent interval variable cannot be *present* in the solution, i.e., it will be omitted in the solution (and
-        everything that depends on it).
+        Absent interval variable cannot be *present* in the solution, i.e., it will be omitted in the solution (and everything that depends on it).
 
         .. seealso::
 
@@ -1125,8 +1368,73 @@ class IntervalVar(ModelElement):
         self._props['status'] = _PresenceStatus.Absent
 
     # Start setters
-    def set_start(self, s_min: int, s_max: int | None = None) -> None:
-        """#doc[IntervalVar.setStart]"""
+    @overload
+    def set_start(self, s: int) -> None:
+        r"""
+        Sets the start of the interval variable to the given value.
+
+        :param s: The start value to set
+        :type s: int
+
+        ## Details
+
+        Sets the start of the interval variable to the given value.
+
+        It overwrites any previous start limits given at variable creation by
+        :meth:`Model.interval_var` or later by
+        :meth:`IntervalVar.set_start`, :meth:`IntervalVar.set_start_min` or :meth:`IntervalVar.set_start_max`.
+
+        Equivalent to:
+
+        .. code-block:: python
+
+            interval_var.set_start_min(s)
+            interval_var.set_start_max(s)
+
+        Note that the start of the interval variable must be in the range :const:`IntervalMin` to :const:`IntervalMax`.
+
+        .. seealso::
+
+            - :meth:`IntervalVar.set_start_min`, :meth:`IntervalVar.set_start_max`.
+            - :meth:`IntervalVar.get_start_min`, :meth:`IntervalVar.get_start_max`.
+        """
+        ...
+
+    @overload
+    def set_start(self, s_min: int, s_max: int) -> None:
+        r"""
+        Limits the possible start value of the variable to the range `s_min` to `s_max`.
+
+        :param s_min: The minimum start value
+        :type s_min: int
+        :param s_max: The maximum start value
+        :type s_max: int
+
+        ## Details
+
+        Limits the possible start value of the variable to the range `s_min` to `s_max`.
+
+        It overwrites any previous start limits given at variable creation by
+        :meth:`Model.interval_var` or later by
+        :meth:`IntervalVar.set_start`, :meth:`IntervalVar.set_start_min` or :meth:`IntervalVar.set_start_max`.
+
+        Equivalent to:
+
+        .. code-block:: python
+
+            interval_var.set_start_min(s_min)
+            interval_var.set_start_max(s_max)
+
+        Note that the start of the interval variable must be in the range :const:`IntervalMin` to :const:`IntervalMax`.
+
+        .. seealso::
+
+            - :meth:`IntervalVar.set_start_min`, :meth:`IntervalVar.set_start_max`.
+            - :meth:`IntervalVar.get_start_min`, :meth:`IntervalVar.get_start_max`.
+        """
+        ...
+
+    def set_start(self, s_min: int, s_max: int | None = None) -> None:  # type: ignore[misc]
         self._props['startMin'] = int(s_min)
         if s_max is None:
             self._props['startMax'] = int(s_min)
@@ -1137,11 +1445,10 @@ class IntervalVar(ModelElement):
         r"""
         Sets the minimum start of the interval variable to the given value.
 
-        :param sMin: The minimum start value to set
-        :type sMin: number
+        :param s_min: The minimum start value to set
+        :type s_min: int
 
-        :returns: The interval variable itself (for method chaining)
-        :rtype: IntervalVar
+        ## Details
 
         Sets the minimum start of the interval variable to the given value.
 
@@ -1150,7 +1457,7 @@ class IntervalVar(ModelElement):
         :meth:`IntervalVar.set_start` or :meth:`IntervalVar.set_start_min`.
         This function does not change the maximum start.
 
-        Note that the start of the interval variable must be in the range :class:`IntervalMin` to :class:`IntervalMax`.
+        Note that the start of the interval variable must be in the range :const:`IntervalMin` to :const:`IntervalMax`.
 
         .. seealso::
 
@@ -1163,11 +1470,10 @@ class IntervalVar(ModelElement):
         r"""
         Sets the maximum start of the interval variable to the given value.
 
-        :param sMax: The maximum start value to set
-        :type sMax: number
+        :param s_max: The maximum start value to set
+        :type s_max: int
 
-        :returns: The interval variable itself (for method chaining)
-        :rtype: IntervalVar
+        ## Details
 
         Sets the maximum start of the interval variable to the given value.
 
@@ -1176,7 +1482,7 @@ class IntervalVar(ModelElement):
         :meth:`IntervalVar.set_start` or :meth:`IntervalVar.set_start_max`.
         The minimum start is not changed by this function.
 
-        Note that the start of the interval variable must be in the range :class:`IntervalMin` to :class:`IntervalMax`.
+        Note that the start of the interval variable must be in the range :const:`IntervalMin` to :const:`IntervalMax`.
 
         .. seealso::
 
@@ -1186,8 +1492,73 @@ class IntervalVar(ModelElement):
         self._props['startMax'] = int(s_max)
 
     # End setters
-    def set_end(self, e_min: int, e_max: int | None = None) -> None:
-        """#doc[IntervalVar.setEnd]"""
+    @overload
+    def set_end(self, e: int) -> None:
+        r"""
+        Sets the end of the interval variable to the given value.
+
+        :param e: The end value to set
+        :type e: int
+
+        ## Details
+
+        Sets the end of the interval variable to the given value.
+
+        It overwrites any previous end limits given at variable creation by
+        :meth:`Model.interval_var` or later by
+        :meth:`IntervalVar.set_end`, :meth:`IntervalVar.set_end_min` or :meth:`IntervalVar.set_end_max`.
+
+        Equivalent to:
+
+        .. code-block:: python
+
+            interval_var.set_end_min(e)
+            interval_var.set_end_max(e)
+
+        Note that the end of the interval variable must be in the range :const:`IntervalMin` to :const:`IntervalMax`.
+
+        .. seealso::
+
+            - :meth:`IntervalVar.set_end_min`, :meth:`IntervalVar.set_end_max`.
+            - :meth:`IntervalVar.get_end_min`, :meth:`IntervalVar.get_end_max`.
+        """
+        ...
+
+    @overload
+    def set_end(self, e_min: int, e_max: int) -> None:
+        r"""
+        Limits the possible end of the variable to the range `e_min` to `e_max`.
+
+        :param e_min: The minimum end value
+        :type e_min: int
+        :param e_max: The maximum end value
+        :type e_max: int
+
+        ## Details
+
+        Limits the possible end of the variable to the range `e_min` to `e_max`.
+
+        It overwrites any previous end limits given at variable creation by
+        :meth:`Model.interval_var` or later by
+        :meth:`IntervalVar.set_end`, :meth:`IntervalVar.set_end_min` or :meth:`IntervalVar.set_end_max`.
+
+        Equivalent to:
+
+        .. code-block:: python
+
+            interval_var.set_end_min(e_min)
+            interval_var.set_end_max(e_max)
+
+        Note that the end of the interval variable must be in the range :const:`IntervalMin` to :const:`IntervalMax`.
+
+        .. seealso::
+
+            - :meth:`IntervalVar.set_end_min`, :meth:`IntervalVar.set_end_max`.
+            - :meth:`IntervalVar.get_end_min`, :meth:`IntervalVar.get_end_max`.
+        """
+        ...
+
+    def set_end(self, e_min: int, e_max: int | None = None) -> None:  # type: ignore[misc]
         self._props['endMin'] = int(e_min)
         if e_max is None:
             self._props['endMax'] = int(e_min)
@@ -1198,11 +1569,10 @@ class IntervalVar(ModelElement):
         r"""
         Sets the minimum end of the interval variable to the given value.
 
-        :param eMin: The minimum end value to set
-        :type eMin: number
+        :param e_min: The minimum end value to set
+        :type e_min: int
 
-        :returns: The interval variable itself (for method chaining)
-        :rtype: IntervalVar
+        ## Details
 
         Sets the minimum end of the interval variable to the given value.
 
@@ -1211,7 +1581,7 @@ class IntervalVar(ModelElement):
         :meth:`IntervalVar.set_end` or :meth:`IntervalVar.set_end_min`.
         This function does not change the maximum end.
 
-        Note that the end of the interval variable must be in the range :class:`IntervalMin` to :class:`IntervalMax`.
+        Note that the end of the interval variable must be in the range :const:`IntervalMin` to :const:`IntervalMax`.
 
         .. seealso::
 
@@ -1224,11 +1594,10 @@ class IntervalVar(ModelElement):
         r"""
         Sets the maximum end of the interval variable to the given value.
 
-        :param eMax: The maximum end value to set
-        :type eMax: number
+        :param e_max: The maximum end value to set
+        :type e_max: int
 
-        :returns: The interval variable itself (for method chaining)
-        :rtype: IntervalVar
+        ## Details
 
         Sets the maximum end of the interval variable to the given value.
         It overwrites any previous maximum end limit given at variable creation by
@@ -1236,7 +1605,7 @@ class IntervalVar(ModelElement):
         :meth:`IntervalVar.set_end` or :meth:`IntervalVar.set_end_max`.
         This function does not change the minimum end.
 
-        Note that the end of the interval variable must be in the range :class:`IntervalMin` to :class:`IntervalMax`.
+        Note that the end of the interval variable must be in the range :const:`IntervalMin` to :const:`IntervalMax`.
 
         .. seealso::
 
@@ -1246,8 +1615,71 @@ class IntervalVar(ModelElement):
         self._props['endMax'] = int(e_max)
 
     # Length setters
-    def set_length(self, l_min: int, l_max: int | None = None) -> None:
-        """#doc[IntervalVar.setLength]"""
+    @overload
+    def set_length(self, len: int) -> None:
+        r"""
+        Sets the length of the interval variable to the given value.
+
+        :param len: The length value to set
+        :type len: int
+
+        ## Details
+
+        Sets the length of the interval variable to the given value.
+        It overwrites any previous length limits given at variable creation by
+        :meth:`Model.interval_var` or later by
+        :meth:`IntervalVar.set_length`, :meth:`IntervalVar.set_length_min` or :meth:`IntervalVar.set_length_max`.
+
+        Equivalent to:
+
+        .. code-block:: python
+
+            interval_var.set_length_min(len)
+            interval_var.set_length_max(len)
+
+        Note that the length of the interval variable must be in the range 0 to :const:`LengthMax`.
+
+        .. seealso::
+
+            - :meth:`IntervalVar.set_length_min`, :meth:`IntervalVar.set_length_max`.
+            - :meth:`IntervalVar.get_length_min`, :meth:`IntervalVar.get_length_max`.
+        """
+        ...
+
+    @overload
+    def set_length(self, l_min: int, l_max: int) -> None:
+        r"""
+        Limits the possible length of the variable to the range `l_min` to `l_max`.
+
+        :param l_min: The minimum length value
+        :type l_min: int
+        :param l_max: The maximum length value
+        :type l_max: int
+
+        ## Details
+
+        Limits the possible length of the variable to the range `l_min` to `l_max`.
+        It overwrites any previous length limits given at variable creation by
+        :meth:`Model.interval_var` or later by
+        :meth:`IntervalVar.set_length`, :meth:`IntervalVar.set_length_min` or :meth:`IntervalVar.set_length_max`.
+
+        Equivalent to:
+
+        .. code-block:: python
+
+            interval_var.set_length_min(l_min)
+            interval_var.set_length_max(l_max)
+
+        Note that the length of the interval variable must be in the range 0 to :const:`LengthMax`.
+
+        .. seealso::
+
+            - :meth:`IntervalVar.set_length_min`, :meth:`IntervalVar.set_length_max`.
+            - :meth:`IntervalVar.get_length_min`, :meth:`IntervalVar.get_length_max`.
+        """
+        ...
+
+    def set_length(self, l_min: int, l_max: int | None = None) -> None:  # type: ignore[misc]
         self._props['lengthMin'] = int(l_min)
         if l_max is None:
             self._props['lengthMax'] = int(l_min)
@@ -1258,11 +1690,10 @@ class IntervalVar(ModelElement):
         r"""
         Sets the minimum length of the interval variable to the given value.
 
-        :param lMin: The minimum length value to set
-        :type lMin: number
+        :param l_min: The minimum length value to set
+        :type l_min: int
 
-        :returns: The interval variable itself (for method chaining)
-        :rtype: IntervalVar
+        ## Details
 
         Sets the minimum length of the interval variable to the given value.
         It overwrites any previous minimum length limit given at variable creation by
@@ -1270,7 +1701,7 @@ class IntervalVar(ModelElement):
         :meth:`IntervalVar.set_length` or :meth:`IntervalVar.set_length_min`.
         This function does not change the maximum length.
 
-        Note that the length of the interval variable must be in the range 0 to :class:`LengthMax`.
+        Note that the length of the interval variable must be in the range 0 to :const:`LengthMax`.
 
         .. seealso::
 
@@ -1283,11 +1714,10 @@ class IntervalVar(ModelElement):
         r"""
         Sets the maximum length of the interval variable to the given value.
 
-        :param lMax: The maximum length value to set
-        :type lMax: number
+        :param l_max: The maximum length value to set
+        :type l_max: int
 
-        :returns: The interval variable itself (for method chaining)
-        :rtype: IntervalVar
+        ## Details
 
         Sets the maximum length of the interval variable to the given value.
         It overwrites any previous maximum length limit given at variable creation by
@@ -1295,7 +1725,7 @@ class IntervalVar(ModelElement):
         :meth:`IntervalVar.set_length` or :meth:`IntervalVar.set_length_max`.
         This function does not change the minimum length.
 
-        Note that the length of the interval must not exceed :class:`LengthMax`.
+        Note that the length of the interval must not exceed :const:`LengthMax`.
 
         .. seealso::
 

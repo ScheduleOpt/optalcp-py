@@ -6,7 +6,7 @@ A Pythonic interface to the OptalCP constraint programming solver.
 
 from __future__ import annotations
 
-__version__: str = '2025.11.2'
+__version__: str = '2025.12.0'
 
 # Import main classes
 from ._model import Model as Model
@@ -16,6 +16,7 @@ from ._expressions import (
     BoolExpr as BoolExpr,
     Constraint as Constraint,
     CumulExpr as CumulExpr,
+    Objective as Objective,
 )
 
 from ._int_bool_var import IntVar as IntVar, BoolVar as BoolVar
@@ -40,7 +41,7 @@ from ._parameters import (
 from ._result import (
     SolveResult as SolveResult,
     ObjectiveEntry as ObjectiveEntry,
-    LowerBoundEntry as LowerBoundEntry,
+    ObjectiveBoundEntry as ObjectiveBoundEntry,
     SolveSummary as SolveSummary,
 )
 from ._solver import (
@@ -49,8 +50,6 @@ from ._solver import (
 )
 from ._solution import Solution as Solution
 
-# Import utilities
-from ._serialization import is_orjson_available as is_orjson_available
 
 __all__: list[str] = [
     # Main classes
@@ -63,6 +62,7 @@ __all__: list[str] = [
     'BoolExpr',
     'Constraint',
     'CumulExpr',
+    'Objective',
     'SequenceVar',
     'IntStepFunction',
     # Constants
@@ -80,8 +80,6 @@ __all__: list[str] = [
     'Solution',
     'SolutionEvent',
     'ObjectiveEntry',
-    'LowerBoundEntry',
+    'ObjectiveBoundEntry',
     'SolveSummary',
-    # Utilities
-    'is_orjson_available',
 ]

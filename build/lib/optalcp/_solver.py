@@ -7,6 +7,7 @@ This module provides the Solver class which supports:
 """
 
 from __future__ import annotations
+
 import asyncio
 import inspect
 import json
@@ -14,113 +15,199 @@ import os
 import signal
 import subprocess
 import sys
-from typing import Callable, Any, IO, final, Awaitable
-from typing_extensions import TypedDict, NotRequired
+from collections.abc import Awaitable, Callable
+from dataclasses import dataclass
+from typing import IO, Any, final
+
+from . import __version__  # Import version for handshake
 from ._model import Model
-from ._serialization import serialize_to_json
-from ._result import SolveResult, ObjectiveEntry, LowerBoundEntry, SolveSummary, _RawSolveSummary
-from ._solution import Solution
 from ._parameters import Parameters
+from ._result import (
+    ObjectiveBoundEntry,
+    ObjectiveEntry,
+    SolveResult,
+    SolveSummary,
+    _RawSolveSummary,
+)
+from ._serialization import _serialize_to_json
+from ._solution import Solution
 from ._utils import _can_use_colors, _find_solver_path
-
-
-# Import version for handshake
-from . import __version__
-
 
 # === Event Types ============================================================
 
 @final
-class SolutionEvent(TypedDict):
-    """
-    Event emitted when a solution is found during solving.
+@dataclass(frozen=True, slots=True)
+class SolutionEvent:
+    r"""
+    An event emitted when a solution is found.
 
-    This event is passed to the on_solution callback and contains:
-    - The solution object with variable values
-    - The solve time when the solution was found
-    - Optional validation status if solution verification is enabled
-    """
-    solveTime: float
-    """Duration of the solve at the time the solution was found, in seconds."""
+    This event is passed to the :attr:`Solver.on_solution` callback and contains
+    the solution, solving time so far, and the result of solution verification.
 
-    valid: NotRequired[bool]
-    """
-    Result of solution verification (only present if Parameters.verifySolutions is True).
+    .. code-block:: python
 
-    When solution verification is enabled (default), the solver independently verifies
-    that all constraints are satisfied and the objective is computed correctly.
-    If present, the value is always True (solver would error if verification failed).
+        import optalcp as cp
+
+        model = cp.Model()
+        x = model.interval_var(length=10, name="x")
+        model.minimize(x.end())
+
+        async def handle_solution(event: cp.SolutionEvent):
+            print(f"Solution found at {event.solve_time:.2f}s")
+            print(f"Objective: {event.solution.get_objective()}")
+            if event.valid is not None:
+                print(f"Verified: {event.valid}")
+
+        solver = cp.Solver(on_solution=handle_solution)
+        result = await solver.solve(model)
+
+    .. seealso::
+
+        - :class:`Solver` for the Python solver API.
+        - :attr:`Solver.on_solution` to register a solution callback.
+    """
+
+    solve_time: float
+    r"""
+    The duration of the solve at the time the solution was found, in seconds.
     """
 
     solution: Solution
-    """The solution containing values for all variables and the objective value."""
+    r"""
+    The solution containing values for all variables and the objective value.
+
+    The solution contains values of all variables in the model (including
+    optional variables) and the value of the objective (if the model specified
+    one).
+
+    .. seealso::
+
+        - :class:`Solution` for accessing variable values.
+    """
+
+    valid: bool | None = None
+    r"""
+    Result of the verification of the solution.
+
+    When parameter :attr:`Parameters.verifySolutions` is set to `True` (the
+    default), the solver verifies all solutions found. The
+    verification checks that all constraints in the model are satisfied and
+    that the objective value is computed correctly.
+
+    The verification is done using a separate code (not used during the
+    search). The point is to independently verify the correctness of the
+    solution.
+
+    Possible values are:
+
+    * `None` - the solution was not verified (because the parameter
+      :attr:`Parameters.verifySolutions` was not set).
+    * `True` - the solution was verified and correct.
+
+    The value can never be `False` because, in that case, the solver ends with an
+    error.
+    """
 
 
-# TODO-DOC-NEEDS-UPDATE: Solver.md documents JavaScript EventEmitter-based API, Python uses callback properties instead
 class Solver:
-    """#doc[Solver]
+    r"""
+    Provides asynchronous communication with the solver subprocess.
 
-    Python-specific implementation notes:
+    Unlike function :meth:`Model.solve`, `Solver` allows the user to process individual events
+    during the solve and to stop the solver at any time. If you're
+    interested in the final result only, use :meth:`Model.solve` instead.
 
-    Unlike the JavaScript API which uses EventEmitter, the Python Solver uses callback properties:
-    - output_stream: Where to write log/warning messages (default: sys.stdout)
-    - on_log, on_warning, on_error: Callbacks for message events
-    - on_solution, on_lower_bound, on_summary: Callbacks for solve events
+    To solve a model, create a new `Solver` object and call its method :meth:`Solver.solve`.
 
-    Example with default output to stdout:
-        solver = Solver()
-        result = await solver.solve(model)  # Logs and warnings go to stdout
+    The Python Solver uses callback properties to handle events:
 
-    Example with redirected output:
-        with open('solver.log', 'w', encoding='utf-8') as f:
-            solver = Solver(output_stream=f)
-            result = await solver.solve(model)  # Logs and warnings go to file
+    * :attr:`Solver.on_error`: Called with a `str` message when an error occurs.
+    * :attr:`Solver.on_warning`: Called with a `str` for every issued warning.
+    * :attr:`Solver.on_log`: Called with a `str` for every log message.
+    * :attr:`Solver.on_solution`: Called with a :class:`SolutionEvent` when a solution is found.
+    * :attr:`Solver.on_objective_bound`: Called with an `ObjectiveBoundEntry` when a new bound is proved.
+    * :attr:`Solver.on_summary`: Called with a :class:`SolveSummary` at the end of the solve.
 
-    Example to disable output:
-        solver = Solver(output_stream=None)
-        result = await solver.solve(model)  # No output
+    The solver output (log, trace, and warnings) is printed to :attr:`Solver.output_stream` by default
+    (which defaults to `sys.stdout`). It can be redirected to a file or suppressed by setting
+    `output_stream` to `None`.
 
-    Example with custom event handlers:
-        solver = Solver(
-            on_log=lambda msg: my_logger.info(msg),
-            on_warning=lambda msg: my_logger.warning(msg)
-        )
-        result = await solver.solve(model)
+    ## Example
 
-    Example changing output stream and callbacks after instantiation:
-        solver = Solver()
-        solver.output_stream = sys.stderr  # Redirect to stderr
-        solver.on_log = lambda msg: print(f"LOG: {msg}")  # Add log handler
-        result = await solver.solve(model)
+    In the following example, we run a solver asynchronously. We set up an
+    `on_solution` callback to print the objective value of the solution
+    and the value of interval variable `x`. After finding the first solution, we request
+    the solver to stop.
+    We also set up an `on_summary` callback to print statistics about the solve.
 
-    Example collecting solutions with callback modification:
-        solver = Solver(output_stream=None)
-        solutions = []
+    .. code-block:: python
 
-        def collect_solution(event):
-            solutions.append(event['solution'])
-            print(f"Found solution at {event['solveTime']:.2f}s")
+        import optalcp as cp
 
-        solver.on_solution = collect_solution
-        result = await solver.solve(model)
-        print(f"Collected {len(solutions)} solutions")
+        model = cp.Model()
+        x = model.interval_var(length=10, name="x")
+        model.minimize(x.end())
+
+        # Create a new solver:
+        solver = cp.Solver()
+
+        # Define solution handler:
+        async def handle_solution(event: cp.SolutionEvent):
+            solution = event.solution
+            print(f"At time {event.solve_time:.2f}, solution found with objective {solution.get_objective()}")
+            # Print value of interval variable x:
+            if solution.is_absent(x):
+                print("  Interval variable x is absent")
+            else:
+                print(f"  Interval variable x: [{solution.get_start(x)} -- {solution.get_end(x)}]")
+            # Request the solver to stop as soon as possible:
+            await solver.stop("We are happy with the first solution found.")
+
+        # Define summary handler:
+        def handle_summary(summary: cp.SolveSummary):
+            print(f"Total duration of solve: {summary.duration}")
+            print(f"Number of branches: {summary.nb_branches}")
+
+        # Set callbacks:
+        solver.on_solution = handle_solution
+        solver.on_summary = handle_summary
+
+        # Solve (async):
+        result = await solver.solve(model, cp.Parameters(time_limit=60))
+        print("All done")
     """
 
     @property
     def output_stream(self) -> IO[str] | None:
-        """
-        Stream where log and warning messages are written.
+        r"""
+        The stream where log and warning messages are written.
 
-        Can be set to any file-like object (file, sys.stdout, sys.stderr, etc.)
-        or None to disable output. Messages are written to this stream before
-        calling the corresponding callbacks (on_log, on_warning).
+        Can be set to any file-like object (file, `sys.stdout`, `sys.stderr`, etc.) or `None` to disable automatic output. When set to `None`, messages are not printed but callbacks (:attr:`Solver.on_log`, :attr:`Solver.on_warning`) still receive them.
 
-        Example:
-            ```python
-            solver = Solver()
-            solver.output_stream = sys.stderr  # Redirect to stderr
-            solver.output_stream = None  # Disable output
-            ```
+        This is different from setting :attr:`Parameters.logLevel` to 0, which disables log message generation entirely.
+
+        The default value is `sys.stdout`.
+
+        .. code-block:: python
+
+            solver = cp.Solver()
+
+            # Redirect to stderr
+            solver.output_stream = sys.stderr
+
+            # Disable automatic printing (callbacks still receive messages)
+            solver.output_stream = None
+
+            # Write to a file
+            with open("solver.log", "w") as f:
+                solver.output_stream = f
+                result = await solver.solve(model)
+
+        .. seealso::
+
+            - :attr:`Solver.on_log` for custom log message handling.
+            - :attr:`Solver.on_warning` for custom warning message handling.
+            - :attr:`Parameters.logLevel` to control log message generation.
         """
         return self._output_stream
 
@@ -130,28 +217,42 @@ class Solver:
 
     @property
     def on_log(self) -> Callable[[str], None] | Callable[[str], Awaitable[None]] | None:
-        """
-        Callback function for log messages from the solver.
+        r"""
+        Callback invoked for each log message.
 
-        Called AFTER the log message is written to output_stream.
-        Set to None to disable (default). Can be either a synchronous or asynchronous function.
+        The callback is called for each log message, after the message is written to :attr:`Solver.output_stream`. The default is `None` (no custom callback).
 
-        Args (callback signature):
-            msg (str): The log message text.
+        The callback receives one argument:
 
-        Example:
-            ```python
-            solver = Solver()
+        - `msg` (`str`): The log message text.
+
+        The callback can be either synchronous or asynchronous.
+
+        .. code-block:: python
+
+            solver = cp.Solver()
+
+            # Synchronous callback
             solver.on_log = lambda msg: my_logger.info(msg)
-            # or:
+
+            # Or with a named function
             def log_handler(msg: str) -> None:
                 print(f"LOG: {msg}")
+
             solver.on_log = log_handler
-            # or async:
+
+            # Asynchronous callback
             async def async_log_handler(msg: str) -> None:
                 await async_logger.info(msg)
+
             solver.on_log = async_log_handler
-            ```
+
+        The amount of log messages and their periodicity can be controlled by :attr:`Parameters.logLevel` and :attr:`Parameters.logPeriod`.
+
+        .. seealso::
+
+            - :attr:`Solver.output_stream` for redirecting output to a stream.
+            - :attr:`Solver.on_warning` for warning messages.
         """
         return self._on_log
 
@@ -161,24 +262,37 @@ class Solver:
 
     @property
     def on_warning(self) -> Callable[[str], None] | Callable[[str], Awaitable[None]] | None:
-        """
+        r"""
         Callback function for warning messages from the solver.
 
-        Called AFTER the warning is written to output_stream.
-        Set to None to disable (default). Can be either a synchronous or asynchronous function.
+        The callback is called for each warning message, after the message is written to :attr:`Solver.output_stream`. The default is `None` (no custom callback).
 
-        Args (callback signature):
-            msg (str): The warning message text.
+        The callback receives one argument:
 
-        Example:
-            ```python
-            solver = Solver()
+        - `msg` (`str`): The warning message text.
+
+        The callback can be either synchronous or asynchronous.
+
+        .. code-block:: python
+
+            solver = cp.Solver()
+
+            # Synchronous callback
             solver.on_warning = lambda msg: warnings.warn(msg)
-            # or async:
+
+            # Asynchronous callback
             async def async_warning_handler(msg: str) -> None:
                 await async_logger.warning(msg)
+
             solver.on_warning = async_warning_handler
-            ```
+
+        The amount of warning messages can be configured using :attr:`Parameters.warningLevel`.
+
+        .. seealso::
+
+            - :attr:`Solver.output_stream` for redirecting output to a stream.
+            - :attr:`Solver.on_log` for log messages.
+            - :attr:`Solver.on_error` for error messages.
         """
         return self._on_warning
 
@@ -188,27 +302,38 @@ class Solver:
 
     @property
     def on_error(self) -> Callable[[str], None] | Callable[[str], Awaitable[None]] | None:
-        """
+        r"""
         Callback function for error messages from the solver.
 
-        Called for each error message. Errors are also written to sys.stderr.
-        Set to None to disable (default). Can be either a synchronous or asynchronous function.
+        The callback is called for each error message. Errors are also written to `sys.stderr`. The default is `None` (no custom callback).
 
-        Note: Errors from the solver are typically non-fatal (e.g., "parameter
-        not supported in academic edition"). Fatal errors raise RuntimeError.
+        The callback receives one argument:
 
-        Args (callback signature):
-            msg (str): The error message text.
+        - `msg` (`str`): The error message text.
 
-        Example:
-            ```python
-            solver = Solver()
+        The callback can be either synchronous or asynchronous.
+
+        .. code-block:: python
+
+            solver = cp.Solver()
+
+            # Synchronous callback
             solver.on_error = lambda msg: print(f"ERROR: {msg}", file=sys.stderr)
-            # or async:
+
+            # Asynchronous callback
             async def async_error_handler(msg: str) -> None:
                 await async_logger.error(msg)
+
             solver.on_error = async_error_handler
-            ```
+
+        An error message indicates that the solve is closing. However, other messages (log, warning, solution) may still arrive after the error.
+
+        Error messages are accumulated during solving and raised as `RuntimeError` at the end of the solve.
+
+        .. seealso::
+
+            - :attr:`Solver.on_warning` for warning messages.
+            - :attr:`Solver.on_log` for log messages.
         """
         return self._on_error
 
@@ -218,38 +343,42 @@ class Solver:
 
     @property
     def on_solution(self) -> Callable[[SolutionEvent], None] | Callable[[SolutionEvent], Awaitable[None]] | None:
-        """
+        r"""
         Callback function for solution events from the solver.
 
-        Called each time the solver finds a new solution.
-        Set to None to disable (default). Can be either a synchronous or asynchronous function.
+        The callback is called each time the solver finds a new solution. The default is `None` (no custom callback).
 
-        Args (callback signature):
-            event (SolutionEvent): Dictionary with keys:
-                - 'solution' (Solution): The solution object with variable values
-                - 'solveTime' (float): Time when solution was found (seconds)
-                - 'valid' (bool, optional): Verification result if enabled
+        The callback receives one argument:
 
-        Example:
-            ```python
+        - `event` (:class:`SolutionEvent`): A dataclass with the following fields:
+           - `solution` (:class:`Solution`): The solution object with variable values.
+           - `solve_time` (`float`): Time when the solution was found (seconds since solve start).
+           - `valid` (`bool | None`): Solution verification result if enabled, `None` otherwise.
+
+        The callback can be either synchronous or asynchronous.
+
+        .. code-block:: python
+
             def handle_solution(event: cp.SolutionEvent) -> None:
-                sol = event['solution']
-                time = event['solveTime']
+                sol = event.solution
+                time = event.solve_time
                 print(f"Solution found at {time:.2f}s, objective={sol.get_objective()}")
 
-            solver = Solver()
+            solver = cp.Solver()
             solver.on_solution = handle_solution
 
-            # or async:
+            # Asynchronous callback
             async def async_handle_solution(event: cp.SolutionEvent) -> None:
-                sol = event['solution']
+                sol = event.solution
                 await save_to_database(sol)
 
             solver.on_solution = async_handle_solution
-            ```
 
-        See Also:
-            SolutionEvent: TypedDict defining the event structure
+        .. seealso::
+
+            - :class:`SolutionEvent` for the event structure.
+            - :class:`Solution` for accessing variable values.
+            - :attr:`Solver.on_objective_bound` for objective bound updates.
         """
         return self._on_solution
 
@@ -258,74 +387,82 @@ class Solver:
         self._on_solution = value
 
     @property
-    def on_lower_bound(self) -> Callable[[LowerBoundEntry], None] | Callable[[LowerBoundEntry], Awaitable[None]] | None:
+    def on_objective_bound(self) -> Callable[[ObjectiveBoundEntry], None] | Callable[[ObjectiveBoundEntry], Awaitable[None]] | None:
+        r"""
+        Callback function for objective bound events from the solver.
+
+        The callback is called when the solver improves the bound on the objective (lower bound for minimization, upper bound for maximization). The default is `None` (no custom callback).
+
+        The callback receives one argument:
+
+        - `event` (:class:`ObjectiveBoundEntry`): A dataclass with the following fields:
+           - `value` (`float`): The new bound value.
+           - `solve_time` (`float`): Time when the bound was proved (seconds since solve start).
+
+        The callback can be either synchronous or asynchronous.
+
+        .. code-block:: python
+
+            solver = cp.Solver()
+
+            # Synchronous callback
+            solver.on_objective_bound = lambda event: print(f"Bound: {event.value}")
+
+            # Asynchronous callback
+            async def async_bound_handler(event: cp.ObjectiveBoundEntry) -> None:
+                await update_dashboard(event.value)
+
+            solver.on_objective_bound = async_bound_handler
+
+        .. seealso::
+
+            - :class:`ObjectiveBoundEntry` for the event structure.
+            - :attr:`Solver.on_solution` for solution events with objective values.
         """
-        Callback function for lower bound events from the solver.
+        return self._on_objective_bound
 
-        Called when the solver improves the lower bound on the objective.
-        Set to None to disable (default). Can be either a synchronous or asynchronous function.
-
-        Args (callback signature):
-            event (LowerBoundEntry): Dictionary with keys:
-                - 'value' (float | list): The new lower bound value
-                - 'solveTime' (float): Time when bound was proved (seconds)
-
-        Example:
-            ```python
-            solver = Solver()
-            solver.on_lower_bound = lambda event: print(f"LB: {event['value']}")
-            # or async:
-            async def async_lb_handler(event: cp.LowerBoundEntry) -> None:
-                await update_dashboard(event['value'])
-            solver.on_lower_bound = async_lb_handler
-            ```
-
-        See Also:
-            LowerBoundEntry: TypedDict defining the event structure
-        """
-        return self._on_lower_bound
-
-    @on_lower_bound.setter
-    def on_lower_bound(self, value: Callable[[LowerBoundEntry], None] | Callable[[LowerBoundEntry], Awaitable[None]] | None) -> None:
-        self._on_lower_bound = value
+    @on_objective_bound.setter
+    def on_objective_bound(self, value: Callable[[ObjectiveBoundEntry], None] | Callable[[ObjectiveBoundEntry], Awaitable[None]] | None) -> None:
+        self._on_objective_bound = value
 
     @property
     def on_summary(self) -> Callable[[SolveSummary], None] | Callable[[SolveSummary], Awaitable[None]] | None:
-        """
+        r"""
         Callback function for solve completion event.
 
-        Called once when the solve completes, providing final statistics.
-        Set to None to disable (default). Can be either a synchronous or asynchronous function.
+        The callback is called once when the solve completes, providing final statistics. The default is `None` (no custom callback).
 
-        The callback receives a SolveSummary instance with snake_case property access
-        for Pythonic API consistency.
+        The callback receives one argument:
 
-        Args (callback signature):
-            summary (SolveSummary): Solve statistics with properties including:
-                - nb_solutions (int): Number of solutions found
-                - duration (float): Total solve time in seconds
-                - nb_branches (int): Number of branches explored
-                - objective (float | None): Best objective value
-                - Plus many other statistics (see SolveSummary)
+        - `summary` (:class:`SolveSummary`): Solve statistics with properties including:
+           - `nb_solutions` (`int`): Number of solutions found.
+           - `duration` (`float`): Total solve time in seconds.
+           - `nb_branches` (`int`): Number of branches explored.
+           - `objective` (`float | None`): Best objective value, or `None` if no solution found.
+           - Plus many other statistics (see :class:`SolveSummary`).
 
-        Example:
-            ```python
+        The callback can be either synchronous or asynchronous.
+
+        .. code-block:: python
+
             def handle_summary(summary: cp.SolveSummary) -> None:
                 print(f"Solve completed: {summary.nb_solutions} solutions")
                 print(f"Time: {summary.duration:.2f}s")
+                if summary.objective is not None:
+                    print(f"Best objective: {summary.objective}")
 
-            solver = Solver()
+            solver = cp.Solver()
             solver.on_summary = handle_summary
 
-            # or async:
+            # Asynchronous callback
             async def async_handle_summary(summary: cp.SolveSummary) -> None:
                 await save_stats_to_db(summary)
 
             solver.on_summary = async_handle_summary
-            ```
 
-        See Also:
-            SolveSummary: Class defining the summary structure
+        .. seealso::
+
+            - :class:`SolveSummary` for the complete list of statistics.
         """
         return self._on_summary
 
@@ -334,20 +471,25 @@ class Solver:
         self._on_summary = value
 
     def __init__(self) -> None:
-        """
-        Create a solver instance.
+        r"""
+        Creates a solver instance for asynchronous solving.
 
-        Callbacks and output stream can be configured after instantiation
-        using the properties: output_stream, on_log, on_warning, on_error,
-        on_solution, on_lower_bound, on_summary.
+        Callbacks and output stream can be configured after instantiation using the
+        properties: :attr:`Solver.output_stream`, :attr:`Solver.on_log`,
+        :attr:`Solver.on_warning`, :attr:`Solver.on_error`, :attr:`Solver.on_solution`,
+        :attr:`Solver.on_objective_bound`, :attr:`Solver.on_summary`.
 
-        Example:
-            ```python
-            solver = Solver()
+        .. code-block:: python
+
+            solver = cp.Solver()
             solver.output_stream = None  # Disable output
-            solver.on_solution = lambda event: print(f"Found solution!")
+            solver.on_solution = lambda event: print("Found solution!")
             result = await solver.solve(model)
-            ```
+
+        .. seealso::
+
+            - :meth:`Solver.solve` to solve a model asynchronously.
+            - :meth:`Model.solve` for simpler synchronous solving.
         """
         # Initialize output stream and callbacks to default values
         self._output_stream = sys.stdout
@@ -355,7 +497,7 @@ class Solver:
         self._on_warning = None
         self._on_error = None
         self._on_solution = None
-        self._on_lower_bound = None
+        self._on_objective_bound = None
         self._on_summary = None
 
         self._process: asyncio.subprocess.Process | None = None
@@ -363,9 +505,8 @@ class Solver:
         self._colors = False
         self._solver_path = ""
         self._solution: Solution | None = None
-        self._solutions: list[Solution] = []
         self._objective_history: list[ObjectiveEntry] = []
-        self._lower_bound_history: list[LowerBoundEntry] = []
+        self._objective_bound_history: list[ObjectiveBoundEntry] = []
         self._solution_time: float | None = None
         self._best_lb_time: float | None = None
         self._solution_valid: bool | None = None
@@ -446,7 +587,7 @@ class Solver:
         Results are stored in instance variables:
         - _raw_summary_data: For 'solve' command
         - _text_result: For 'toText' and 'toJS' commands
-        - _solution, _solutions, etc.: For solution tracking
+        - _solution, etc.: For solution tracking
 
         Args:
             command: The command to send ('solve', 'toText', 'toJS')
@@ -531,7 +672,7 @@ class Solver:
             timeout_sec = params.processExitTimeout if params and params.processExitTimeout is not None else 3.0
             try:
                 await asyncio.wait_for(self._process.wait(), timeout=timeout_sec)
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 self._process.kill()
                 await self._process.wait()
 
@@ -569,47 +710,47 @@ class Solver:
                     params: Parameters | None = None,
                     warm_start: Solution | None = None) -> SolveResult:
         r"""
-        Solves a given model with the given parameters.
+        Solves a model with the specified parameters.
 
         :param model: The model to solve
         :type model: Model
         :param params: The parameters for the solver
-        :type params: Parameters
-        :param warmStart: An initial solution to start the solver with
-        :type warmStart: Solution
-        :param log: A stream to redirect the solver output to. If null, the output is suppressed. If undefined, the output stream is not changed (the default is standard output)
-        :type log: NodeJS.WritableStream | null
+        :type params: Parameters | None
+        :param warm_start: An initial solution to start the solver with
+        :type warm_start: Solution | None
+        :rtype: SolveResult
+        :returns: The result of the solve when finished.
 
-        :returns: A promise that resolves to a SolveResult object when the solve is finished.
-        :rtype: Promise<SolveResult>
+        ## Details
 
-        The solving process starts asynchronously. Use `await` to wait for the
+        The solving process runs asynchronously. Use `await` to wait for the
         solver to finish.  During the solve, the solver emits events that can be
-        intercepted (see :meth:`Solver.on`) to execute a code when the event occurs.
+        intercepted using callback properties like :attr:`Solver.on_solution`,
+        :attr:`Solver.on_log`, etc.
 
-        Note that JavaScript is single-threaded.  Therefore, it cannot communicate
-        with the solver subprocess while the user code runs.  The user code
-        must be idle (using `await` or waiting for an event) for the solver to
-        function correctly.
+        Communication with the solver subprocess happens through the event loop.
+        The user code must yield control (using `await` or waiting for an event)
+        for the solver to receive commands and send updates.
 
         ### Warm start and external solutions
 
-        If the `warmStart` parameter is specified, the solver will start with the
+        If the `warm_start` parameter is specified, the solver will start with the
         given solution.  The solution must be compatible with the model; otherwise
         an error is raised.  The solver will take advantage of the
         solution to speed up the search: it will search only for better solutions
         (if it is a minimization or maximization problem). The solver may try to
         improve the provided solution by Large Neighborhood Search.
 
-        There are two ways to pass a solution to the solver: using `warmStart`
+        There are two ways to pass a solution to the solver: using `warm_start`
         parameter and using function :meth:`Solver.send_solution`.
-        The difference is that `warmStart` is guaranteed to be used by the solver
+        The difference is that `warm_start` is guaranteed to be used by the solver
         before the solve starts.  On the other hand, `send_solution` can be called
         at any time during the solve.
 
-        Parameter :meth:`Parameters.LNSUseWarmStartOnly` controls whether the
+        Parameter :attr:`Parameters.lnsUseWarmStartOnly` controls whether the
         solver should only use the warm start solution (and not search for other
-        initial solutions).
+        initial solutions). If no warm start is provided, the solver searches for
+        its own initial solution as usual.
         """
         await self._run("solve", model, params, warm_start)
 
@@ -620,9 +761,8 @@ class Solver:
         return SolveResult(
             self._raw_summary_data,
             self._solution,
-            self._solutions,
             self._objective_history,
-            self._lower_bound_history,
+            self._objective_bound_history,
             self._solution_time,
             self._best_lb_time,
             self._solution_valid
@@ -654,24 +794,47 @@ class Solver:
 
     def stop(self, reason: str = "User requested") -> None:
         r"""
-        Instruct the solver to stop ASAP.
+        Requests the solver to stop as soon as possible.
 
         :param reason: The reason why to stop. The reason will appear in the log
-        :type reason: string
+        :type reason: str
 
-        :returns: A promise that resolves when the solver has stopped
-        :rtype: Promise<void>
+        ## Details
 
-        A stop message is sent to the server asynchronously. The server will
-        stop as soon as possible and will send a summary event and close event.
-        However, due to the asynchronous nature of the communication,
-        other events may be sent before the summary event (e.g., another solution
-        found or a log message).
+        This method only initiates the stop; it returns immediately without waiting
+        for the solver to actually stop. The solver will stop as soon as possible and
+        will send a summary event. However, other events may be sent
+        before the summary event (e.g., another solution found or a log message).
 
         Requesting a stop on a solver that has already stopped has no effect.
 
+        ## Example
+
         In the following example, we issue a stop command 1 minute after the first
         solution is found.
+
+        .. code-block:: python
+
+            import optalcp as cp
+            import threading
+
+            solver = cp.Solver()
+            timer_started = False
+
+            def on_solution(event):
+                global timer_started
+                # We just found a solution. Set a timeout if there isn't any.
+                if not timer_started:
+                    timer_started = True
+                    # Register a function to be called after 60 seconds:
+                    def stop_solver():
+                        print("Requesting solver to stop")
+                        solver.stop("Stop because I said so!")
+                    timer = threading.Timer(60.0, stop_solver)  # The timeout is 60 seconds
+                    timer.start()
+
+            solver.on_solution = on_solution
+            result = await solver.solve(model, cp.Parameters(timeLimit=300))
         """
         # No process running or already finished
         if self._process is None or self._process.returncode is not None:
@@ -693,8 +856,7 @@ class Solver:
         :param solution: The solution to send. It must be compatible with the model; otherwise, an error is raised
         :type solution: Solution
 
-        :returns: A promise that resolves when the solution has been sent
-        :rtype: Promise<void>
+        ## Details
 
         This function can be used to send an external solution to the solver, e.g.
         found by another solver, a heuristic, or a user.  The solver will take
@@ -710,7 +872,7 @@ class Solver:
         Sending a solution to a solver that has already stopped has no effect.
 
         The solution is sent to the solver asynchronously. Unless parameter
-        :meth:`Parameters.logLevel` is set to 0, the solver will log a message when it
+        :attr:`Parameters.logLevel` is set to 0, the solver will log a message when it
         receives the solution.
         """
         self._send_message({"msg": "solution", "data": solution._to_dict()})
@@ -734,7 +896,7 @@ class Solver:
         if self._process.stdin.is_closing():
             return
 
-        message_bytes = serialize_to_json(message) + b'\n'
+        message_bytes = _serialize_to_json(message) + b'\n'
         self._process.stdin.write(message_bytes)
         # No drain() - message will be flushed asynchronously
 
@@ -791,17 +953,15 @@ class Solver:
         :param model: The model to export
         :type model: Model
         :param params: Optional solver parameters to include
-        :type params: Parameters
+        :type params: Parameters | None
         :param warm_start: Optional initial solution to include
-        :type warm_start: Solution
-
+        :type warm_start: Solution | None
+        :rtype: str
         :returns: A string containing the model in JSON format.
-        :rtype: string
 
-        Async version of :meth:`to_json`. This method performs JSON
-        serialization locally without requiring solver communication.
+        ## Details
 
-        .. rubric:: Example
+        Async version of :meth:`Model.to_json`.
 
         .. code-block:: python
 
@@ -821,8 +981,8 @@ class Solver:
 
         .. seealso::
 
-            - :meth:`to_json` for synchronous usage.
-            - :meth:`from_json` to import from JSON.
+            - :meth:`Model.to_json` for synchronous usage.
+            - :meth:`Model.from_json` to import from JSON.
         """
         # JSON serialization is local - doesn't require solver communication
         from ._result import _to_json_impl
@@ -838,19 +998,18 @@ class Solver:
         :param model: The model to convert
         :type model: Model
         :param params: Optional solver parameters
-        :type params: Parameters
+        :type params: Parameters | None
         :param warm_start: Optional initial solution to include
-        :type warm_start: Solution
-
+        :type warm_start: Solution | None
+        :rtype: str
         :returns: Text representation of the model.
-        :rtype: string
 
-        Async version of :meth:`to_txt`. This method communicates with
+        ## Details
+
+        Async version of :meth:`Model.to_txt`. This method communicates with
         the solver process to generate the text output.
 
         The output is human-readable and similar to the IBM CP Optimizer file format.
-
-        .. rubric:: Example
 
         .. code-block:: python
 
@@ -872,8 +1031,8 @@ class Solver:
 
         .. seealso::
 
-            - :meth:`to_txt` for synchronous usage.
-            - :meth:`to_js` for JavaScript export.
+            - :meth:`Model.to_txt` for synchronous usage.
+            - :meth:`Solver.to_js` for JavaScript export.
         """
         return await self._to_text("toText", model, params, warm_start)
 
@@ -887,14 +1046,15 @@ class Solver:
         :param model: The model to convert
         :type model: Model
         :param params: Optional solver parameters (included in generated code)
-        :type params: Parameters
+        :type params: Parameters | None
         :param warm_start: Optional initial solution to include
-        :type warm_start: Solution
-
+        :type warm_start: Solution | None
+        :rtype: str
         :returns: JavaScript code representing the model.
-        :rtype: string
 
-        Async version of :meth:`to_js`. This method communicates with
+        ## Details
+
+        Async version of :meth:`Model.to_js`. This method communicates with
         the solver process to generate the JavaScript output.
 
         The output is human-readable, executable with Node.js, and can be stored
@@ -902,8 +1062,6 @@ class Solver:
 
         This feature is experimental and the result is not guaranteed to be valid
         in all cases.
-
-        .. rubric:: Example
 
         .. code-block:: python
 
@@ -925,8 +1083,8 @@ class Solver:
 
         .. seealso::
 
-            - :meth:`to_js` for synchronous usage.
-            - :meth:`to_txt` for text format export.
+            - :meth:`Model.to_js` for synchronous usage.
+            - :meth:`Solver.to_txt` for text format export.
         """
         return await self._to_text("toJS", model, params, warm_start)
 
@@ -938,9 +1096,8 @@ class Solver:
         """Reset solver state before a new solve/conversion operation."""
         self._stop_requested = False
         self._solution = None
-        self._solutions = []
         self._objective_history = []
-        self._lower_bound_history = []
+        self._objective_bound_history = []
         self._solution_time = None
         self._best_lb_time = None
         self._solution_valid = None
@@ -979,7 +1136,7 @@ class Solver:
         if warm_start:
             model_data['warmStart'] = warm_start._to_dict()
 
-        json_bytes = serialize_to_json(model_data)
+        json_bytes = _serialize_to_json(model_data)
 
         # Write model to file if OPTALCP_MODEL is set (for debugging)
         model_file = os.environ.get('OPTALCP_MODEL')
@@ -1003,13 +1160,13 @@ class Solver:
             if handshake_data.get('msg') != 'handshake':
                 raise RuntimeError(f"Unexpected handshake response: {handshake_data}")
         except json.JSONDecodeError as e:
-            raise RuntimeError(f"Invalid handshake response: {e}")
+            raise RuntimeError(f"Invalid handshake response: {e}") from e
 
     def _prepare_handshake(self, colors: bool) -> bytes:
         """Prepare handshake message bytes to send to solver."""
         handshake: dict[str, Any] = {
             "msg": "handshake", "version": __version__, "colors": colors}
-        return serialize_to_json(handshake) + b'\n'
+        return _serialize_to_json(handshake) + b'\n'
 
     def _handle_message(self, line: bytes) -> bool:
         """
@@ -1030,7 +1187,7 @@ class Solver:
         try:
             message: dict[str, Any] = json.loads(line)
         except json.JSONDecodeError as e:
-            raise RuntimeError(f"Invalid JSON from solver: {e}")
+            raise RuntimeError(f"Invalid JSON from solver: {e}") from e
 
         msg_type = message.get('msg')
         data: Any = message.get('data')
@@ -1070,37 +1227,34 @@ class Solver:
             solution = Solution()
             solution._init_from_dict(data)
             self._solution = solution
-            self._solutions.append(solution)
 
-            history_item: ObjectiveEntry = {
-                'solveTime': data['solveTime'],
-                'objective': solution.get_objective()
-            }
-            if 'verifiedOK' in data:
-                history_item['valid'] = data['verifiedOK']
+            history_item = ObjectiveEntry(
+                solve_time=data['solveTime'],
+                objective=solution.get_objective(),
+                valid=data.get('verifiedOK')
+            )
             self._objective_history.append(history_item)
 
             self._solution_time = data['solveTime']
             if 'verifiedOK' in data:
                 self._solution_valid = data['verifiedOK']
 
-            event: SolutionEvent = {
-                'solveTime': data['solveTime'],
-                'solution': solution
-            }
-            if 'verifiedOK' in data:
-                event['valid'] = data['verifiedOK']
+            event = SolutionEvent(
+                solve_time=data['solveTime'],
+                solution=solution,
+                valid=data.get('verifiedOK')
+            )
             self._call_handler(self.on_solution, event)
             return True
 
         if msg_type == 'lowerBound' and data is not None:
-            lb_event: LowerBoundEntry = {
-                'solveTime': data['solveTime'],
-                'value': data['value']
-            }
-            self._lower_bound_history.append(lb_event)
+            bound_event = ObjectiveBoundEntry(
+                solve_time=data['solveTime'],
+                value=data['value']
+            )
+            self._objective_bound_history.append(bound_event)
             self._best_lb_time = data['solveTime']
-            self._call_handler(self.on_lower_bound, data)
+            self._call_handler(self.on_objective_bound, bound_event)
             return True
 
         if msg_type == 'textModel':
@@ -1150,7 +1304,7 @@ class Solver:
                 if sync_process is not None and sync_process.stdin is not None:
                     try:
                         stop_msg = {"msg": "stop", "reason": "Interrupted"}
-                        stop_bytes = serialize_to_json(stop_msg) + b'\n'
+                        stop_bytes = _serialize_to_json(stop_msg) + b'\n'
                         sync_process.stdin.write(stop_bytes)
                         sync_process.stdin.flush()
                     except Exception:
@@ -1270,9 +1424,8 @@ class Solver:
         return SolveResult(
             self._raw_summary_data,
             self._solution,
-            self._solutions,
             self._objective_history,
-            self._lower_bound_history,
+            self._objective_bound_history,
             self._solution_time,
             self._best_lb_time,
             self._solution_valid

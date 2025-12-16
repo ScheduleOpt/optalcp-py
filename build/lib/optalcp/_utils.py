@@ -6,6 +6,7 @@ solver implementations. These are not part of the public API.
 """
 
 from __future__ import annotations
+
 import os
 import sys
 from typing import IO
