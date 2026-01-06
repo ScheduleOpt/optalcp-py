@@ -1,0 +1,15 @@
+typing-extensions>=4.0.0
+
+[dev]
+setuptools>=61.0
+pyyaml>=6.0
+build>=1.0
+pytest>=7.0
+pytest-asyncio>=0.21.0
+mypy>=1.0
+pyright>=1.1.0
+ruff>=0.8.0
+pydoclint>=0.5.0
+
+[fast]
+orjson>=3.9.0
