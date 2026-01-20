@@ -8,7 +8,7 @@ Type definitions are in _types.py.
 from __future__ import annotations
 
 from collections.abc import Iterable
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, overload
 
 from ._constants import (
     IntervalMax,
@@ -706,9 +706,10 @@ class IntExpr(ModelElement):
         """
         return BoolExpr(self._model, 'intGt', [self._as_arg(), IntExpr._wrap(other)])
 
+    @overload
     def __ge__(self, other: IntExpr | int) -> BoolExpr:
         r"""
-        Create a greater-than-or-equal constraint using the `>=` operator.
+        Create a greater-than-or-equal comparison using the `>=` operator.
 
         :param other: The expression or constant to compare against.
         :type other: IntExpr | int
@@ -741,6 +742,49 @@ class IntExpr(ModelElement):
             # Reverse: constant >= IntExpr
             model.enforce(7 >= x)  # equivalent to x <= 7
         """
+        ...
+
+    @overload
+    def __ge__(self, other: CumulExpr) -> Constraint:
+        r"""
+        Create a cumulative capacity constraint using `capacity >= cumul`.
+
+        :param other: The cumulative expression to constrain.
+        :type other: CumulExpr
+        :rtype: Constraint
+        :returns: A constraint ensuring the cumulative expression never exceeds self.
+
+        ## Details
+
+        Returns a :class:`Constraint` that ensures the cumulative expression is at most `self` (i.e., `cumul <= self`). This allows writing `capacity >= cumul` in a natural order.
+
+        This overload enables variable capacity constraints where the capacity is an :class:`IntExpr` (such as an :class:`IntVar`).
+
+        **Limitations:**
+
+        - Variable capacity is only supported for discrete resources (pulses). Reservoir resources (steps) require a constant capacity.
+        - The capacity expression must not be optional or absent.
+
+        .. code-block:: python
+
+            model = cp.Model()
+            tasks = [model.interval_var(length=5, name=f"task_{i}") for i in range(3)]
+            cumul = model.sum(model.pulse(t, 2) for t in tasks)
+
+            # Variable capacity constraint: capacity >= cumul
+            capacity = model.int_var(min=4, max=10, name="capacity")
+            model.enforce(capacity >= cumul)
+
+        .. seealso::
+
+            - :meth:`CumulExpr.__le__` for the equivalent using `cumul <= capacity`.
+            - :meth:`CumulExpr.__rge__` for the reverse operator on CumulExpr.
+        """
+        ...
+
+    def __ge__(self, other: IntExpr | int | CumulExpr) -> BoolExpr | Constraint:
+        if isinstance(other, CumulExpr):
+            return Constraint(self._model, 'cumulLe', [other._as_arg(), self._as_arg()])
         return BoolExpr(self._model, 'intGe', [self._as_arg(), IntExpr._wrap(other)])
 
     def __eq__(self, other: IntExpr | int) -> BoolExpr:  # type: ignore
@@ -1436,20 +1480,12 @@ class BoolExpr(IntExpr):
         """
         return BoolExpr(self._model, 'boolAnd', [_wrap_bool(other), self._as_arg()])
 
-    def enforce(self) -> BoolExpr:
+    def enforce(self) -> None:
         r"""
-        Adds this boolean expression as a constraint to the model and returns self for chaining.
-
-        :rtype: BoolExpr
-        :returns: Returns self to allow method chaining.
-
-        ## Details
+        Adds this boolean expression as a constraint to the model.
 
         This method adds the boolean expression as a constraint to the model. It provides
         a fluent-style alternative to :meth:`Model.enforce`.
-
-        The method returns `self`, allowing you to chain multiple method calls together
-        or store the expression in a variable while simultaneously adding it to the model.
 
         A constraint is satisfied if it is not `False`. In other words, a constraint is
         satisfied if it is `True` or *absent*.
@@ -1482,7 +1518,6 @@ class BoolExpr(IntExpr):
             - :class:`BoolExpr` for more about boolean expressions.
         """
         self._model.enforce(self)
-        return self
 
     def _reusable_bool_expr(self) -> BoolExpr:
         out_params: list[_Argument] = [self._as_arg()]
@@ -1663,7 +1698,7 @@ class CumulExpr(ModelElement):
 
         .. seealso::
 
-            - :meth:`Model.cumul_sum` for summing multiple cumulative expressions.
+            - :meth:`Model.sum` for summing multiple cumulative expressions.
         """
         return CumulExpr(self._model, 'cumulPlus', [self._as_arg(), CumulExpr._wrap(other)])
 
@@ -1741,12 +1776,12 @@ class CumulExpr(ModelElement):
         """
         return CumulExpr(self._model, 'cumulNeg', [self._as_arg()])
 
-    def __le__(self, other: int) -> Constraint:
+    def __le__(self, other: int | IntExpr) -> Constraint:
         r"""
         Constrain cumulative expression to be at most a capacity using `<=`.
 
         :param other: The maximum capacity value.
-        :type other: int
+        :type other: int | IntExpr
         :rtype: Constraint
         :returns: A constraint ensuring the cumulative expression never exceeds the capacity.
 
@@ -1755,6 +1790,11 @@ class CumulExpr(ModelElement):
         Returns a :class:`Constraint` that ensures the cumulative expression is everywhere less than or equal to the given capacity. Use :meth:`Model.enforce` to add this constraint to the model for code clarity.
 
         Use this to specify the maximum limit of resource usage at any time. For example, to limit the number of workers working simultaneously, or the maximum amount of material in stock.
+
+        **Limitations:**
+
+        - Variable capacity (using `IntExpr`) is only supported for discrete resources (pulses). Reservoir resources (steps) require a constant capacity.
+        - The capacity expression must not be optional or absent.
 
         Both forward and reverse operators are supported:
 
@@ -1775,11 +1815,28 @@ class CumulExpr(ModelElement):
             # Equivalent using reverse operator:
             # model.enforce(6 >= resource_usage)
 
+        Variable capacity example:
+
+        .. code-block:: python
+
+            model = cp.Model()
+            task1 = model.interval_var(length=5, name="task1")
+            task2 = model.interval_var(length=10, name="task2")
+
+            # Variable capacity
+            extra_capacity = model.int_var(min=0, max=3, name="extra_capacity")
+            total_capacity = 4 + extra_capacity
+
+            resource_usage = model.sum([model.pulse(task1, 2), model.pulse(task2, 3)])
+            model.enforce(resource_usage <= total_capacity)
+
+            model.minimize(extra_capacity)
+
         .. seealso::
 
             - :meth:`CumulExpr.__ge__` for the minimum capacity constraint.
         """
-        return Constraint(self._model, 'cumulLe', [self._as_arg(), _wrap_int(other)])
+        return Constraint(self._model, 'cumulLe', [self._as_arg(), IntExpr._wrap(other)])
 
     def __ge__(self, other: int) -> Constraint:
         r"""
@@ -1847,12 +1904,12 @@ class CumulExpr(ModelElement):
         """
         return Constraint(self._model, 'cumulGe', [self._as_arg(), _wrap_int(other)])
 
-    def __rge__(self, other: int) -> Constraint:
+    def __rge__(self, other: int | IntExpr) -> Constraint:
         r"""
         Reverse greater-than-or-equal for `capacity >= cumul`.
 
         :param other: The maximum capacity value.
-        :type other: int
+        :type other: int | IntExpr
         :rtype: Constraint
         :returns: A constraint ensuring the cumulative expression never exceeds the capacity.
 
@@ -1862,11 +1919,16 @@ class CumulExpr(ModelElement):
 
         This is equivalent to `cumul <= capacity`.
 
+        **Limitations:**
+
+        - Variable capacity (using `IntExpr`) is only supported for discrete resources (pulses). Reservoir resources (steps) require a constant capacity.
+        - The capacity expression must not be optional or absent.
+
         .. seealso::
 
             - :meth:`CumulExpr.__le__` for the forward operator.
         """
-        return Constraint(self._model, 'cumulLe', [self._as_arg(), _wrap_int(other)])
+        return Constraint(self._model, 'cumulLe', [self._as_arg(), IntExpr._wrap(other)])
 
     def _cumul_max_profile(self, profile: IntStepFunction) -> Constraint:
         out_params: list[_Argument] = [self._as_arg(), IntStepFunction._wrap(profile)]

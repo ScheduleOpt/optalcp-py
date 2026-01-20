@@ -15,7 +15,7 @@ from typing import NotRequired, final
 from typing_extensions import TypedDict
 
 from ._model import Model
-from ._parameters import Parameters
+from ._parameters import Parameters, _parameters_from_json, _parameters_to_json
 from ._solution import Solution
 
 
@@ -823,7 +823,7 @@ def _to_json_impl(model: Model,
     model_data = model._to_dict()
 
     if params is not None:
-        model_data['parameters'] = params._to_dict()
+        model_data['parameters'] = _parameters_to_json(params)
 
     if warm_start is not None:
         model_data['warmStart'] = warm_start._to_dict()  # JSON uses camelCase
@@ -843,8 +843,7 @@ def _from_json_impl(json_str: str) -> tuple[Model, Parameters | None, Solution |
     # Deserialize parameters if present
     params: Parameters | None = None
     if 'parameters' in data:
-        params = Parameters()
-        params._from_dict(data['parameters'])
+        params = _parameters_from_json(data['parameters'])
 
     # Deserialize warm start if present
     warm_start: Solution | None = None

@@ -22,6 +22,7 @@ optalcp.egg-info/requires.txt
 optalcp.egg-info/top_level.txt
 tests/test_basic.py
 tests/test_bool_var.py
+tests/test_cumul.py
 tests/test_edge_cases.py
 tests/test_error_handling.py
 tests/test_fluent_api.py

@@ -6,7 +6,7 @@ A Pythonic interface to the OptalCP constraint programming solver.
 
 from __future__ import annotations
 
-__version__: str = '2025.12.1'
+__version__: str = '2025.12.2'
 
 # Import main classes
 from ._model import Model as Model
@@ -34,7 +34,11 @@ from ._constants import (
 # Import parameters
 from ._parameters import (
     Parameters as Parameters,
-    WorkerParameters as WorkerParameters
+    WorkerParameters as WorkerParameters,
+    copy_parameters as copy_parameters,
+    merge_parameters as merge_parameters,
+    parse_parameters as parse_parameters,
+    parse_known_parameters as parse_known_parameters,
 )
 
 # Import solver result types and functions
@@ -74,6 +78,10 @@ __all__: list[str] = [
     # Parameters
     'Parameters',
     'WorkerParameters',
+    'copy_parameters',
+    'merge_parameters',
+    'parse_parameters',
+    'parse_known_parameters',
     # Solver
     'Solver',
     'SolveResult',

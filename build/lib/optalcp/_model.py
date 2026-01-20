@@ -166,10 +166,10 @@ class Model:
         model.minimize(model.max(ends))
 
         # Solve the model with the provided parameters:
-        result = model.solve(cp.Parameters(
-            timeLimit=3,  # Stop after 3 seconds
-            nbWorkers=4,  # Use for CPU threads
-        ))
+        result = model.solve({
+            'timeLimit': 3,  # Stop after 3 seconds
+            'nbWorkers': 4,  # Use for CPU threads
+        })
 
         if result.nb_solutions == 0:
             print("No solution found.")
@@ -182,9 +182,9 @@ class Model:
             for task in tasks:
                 start = solution.get_start(task)
                 if start is not None:
-                    print(f"Task {task.get_name()} starts at {start}")
+                    print(f"Task {task.name} starts at {start}")
                 else:
-                    print(f"Task {task.get_name()} is absent (not scheduled).")
+                    print(f"Task {task.name} is absent (not scheduled).")
 
     .. seealso::
 
@@ -210,9 +210,9 @@ class Model:
 
         After creating a model, use its methods to define:
 
-        * **Variables**: :meth:`Model.interval_var`, :meth:`Model.int_var`, :meth:`Model.bool_var`
-        * **Constraints**: :meth:`Model.no_overlap`, :meth:`Model.end_before_start`, :meth:`Model.enforce`, etc.
-        * **Objective**: :meth:`Model.minimize` or :meth:`Model.maximize`
+        - **Variables**: :meth:`Model.interval_var`, :meth:`Model.int_var`, :meth:`Model.bool_var`
+        - **Constraints**: :meth:`Model.no_overlap`, :meth:`Model.end_before_start`, :meth:`Model.enforce`, etc.
+        - **Objective**: :meth:`Model.minimize` or :meth:`Model.maximize`
 
         .. code-block:: python
 
@@ -1088,7 +1088,7 @@ class Model:
             # Tasks cannot overlap:
             model.no_overlap(tasks)
 
-            result = model.solve(cp.Parameters(searchType="FDS"))
+            result = model.solve({'searchType': 'FDS'})
         """
         ...
 
@@ -1199,13 +1199,13 @@ class Model:
     # =========================================================================
 
     def solve(self,
-              params: Parameters | None = None,
+              parameters: Parameters | None = None,
               warm_start: Solution | None = None) -> SolveResult:
         r"""
         Solves the model and returns the result.
 
-        :param params: The parameters for solving
-        :type params: Parameters | None
+        :param parameters: The parameters for solving
+        :type parameters: Parameters | None
         :param warm_start: The solution to start with
         :type warm_start: Solution | None
         :rtype: SolveResult
@@ -1238,7 +1238,7 @@ class Model:
 
         ### Parameters
 
-        Solver behavior can be controlled via the `params` argument. Common parameters
+        Solver behavior can be controlled via the `parameters` argument. Common parameters
         include:
 
         * `timeLimit` - Maximum solving time in seconds.
@@ -1282,7 +1282,7 @@ class Model:
             print(f"Objective: {result.objective}")
 
             # Solve with parameters
-            params = cp.Parameters(timeLimit=60, searchType="LNS")
+            params: cp.Parameters = {'timeLimit': 60, 'searchType': 'LNS'}
             result = model.solve(params)
 
             # Solve with warm start
@@ -1297,16 +1297,16 @@ class Model:
             - :class:`Solution` for working with solutions.
         """
         from ._solver import Solver
-        return Solver()._sync_solve(self, params, warm_start)
+        return Solver()._sync_solve(self, parameters, warm_start)
 
     def to_json(self,
-                params: Parameters | None = None,
+                parameters: Parameters | None = None,
                 warm_start: Solution | None = None) -> str:
         r"""
         Exports the model to JSON format.
 
-        :param params: Optional solver parameters to include
-        :type params: Parameters | None
+        :param parameters: Optional solver parameters to include
+        :type parameters: Parameters | None
         :param warm_start: Optional initial solution to include
         :type warm_start: Solution | None
         :rtype: str
@@ -1344,16 +1344,16 @@ class Model:
             - :meth:`Model.to_js` to export as JavaScript code.
         """
         from ._result import _to_json_impl
-        return _to_json_impl(self, params, warm_start)
+        return _to_json_impl(self, parameters, warm_start)
 
     def to_text(self,
-               params: Parameters | None = None,
+               parameters: Parameters | None = None,
                warm_start: Solution | None = None) -> str:
         r"""
         Converts the model to text format similar to IBM CP Optimizer file format.
 
-        :param params: Optional solver parameters (mostly unused)
-        :type params: Parameters | None
+        :param parameters: Optional solver parameters (mostly unused)
+        :type parameters: Parameters | None
         :param warm_start: Optional initial solution to include
         :type warm_start: Solution | None
         :rtype: str
@@ -1406,16 +1406,16 @@ class Model:
         """
         from ._solver import Solver
         solver = Solver()
-        return solver._sync_to_text(self, params, warm_start)
+        return solver._sync_to_text(self, parameters, warm_start)
 
     def to_js(self,
-              params: Parameters | None = None,
+              parameters: Parameters | None = None,
               warm_start: Solution | None = None) -> str:
         r"""
         Converts the model to equivalent JavaScript code.
 
-        :param params: Optional solver parameters (included in generated code)
-        :type params: Parameters | None
+        :param parameters: Optional solver parameters (included in generated code)
+        :type parameters: Parameters | None
         :param warm_start: Optional initial solution to include
         :type warm_start: Solution | None
         :rtype: str
@@ -1455,7 +1455,7 @@ class Model:
         """
         from ._solver import Solver
         solver = Solver()
-        return solver._sync_to_js(self, params, warm_start)
+        return solver._sync_to_js(self, parameters, warm_start)
 
     @classmethod
     def from_json(cls, json_str: str) -> tuple[Model, Parameters | None, Solution | None]:
@@ -1489,7 +1489,7 @@ class Model:
             x = model.interval_var(length=10, name="task_x")
             model.minimize(x.end())
 
-            params = cp.Parameters(timeLimit=60000)
+            params: cp.Parameters = {'timeLimit': 60}
             json_str = model.to_json(params)
 
             # Save to file
@@ -2652,7 +2652,7 @@ class Model:
             # Minimize the maximum of the ends (makespan):
             model.minimize(model.max(ends))
 
-            result = model.solve(cp.Parameters(searchType="FDS"))
+            result = model.solve({'searchType': 'FDS'})
 
         ## Example
 
@@ -2780,7 +2780,7 @@ class Model:
             # Minimize the maximum of the ends (makespan):
             model.minimize(model.max([t.end() for t in task_vars]))
 
-            result = model.solve(cp.Parameters(searchType="FDS"))
+            result = model.solve({'searchType': 'FDS'})
 
         .. seealso::
 
@@ -2871,7 +2871,7 @@ class Model:
             # Minimize the maximum of the ends (makespan):
             model.minimize(model.max([t.end() for t in task_vars]))
 
-            result = model.solve(cp.Parameters(searchType="FDS"))
+            result = model.solve({'searchType': 'FDS'})
 
         .. seealso::
 

@@ -21,7 +21,7 @@ from typing import IO, Any, final
 
 from . import __version__  # Import version for handshake
 from ._model import Model
-from ._parameters import Parameters
+from ._parameters import Parameters, _parameters_to_json
 from ._result import (
     ObjectiveBoundEntry,
     ObjectiveEntry,
@@ -172,7 +172,7 @@ class Solver:
         solver.on_summary = handle_summary
 
         # Solve (async):
-        result = await solver.solve(model, cp.Parameters(time_limit=60))
+        result = await solver.solve(model, {'timeLimit': 60})
         print("All done")
     """
 
@@ -456,27 +456,8 @@ class Solver:
             raise RuntimeError("Cannot change on_summary while solve is running")
         self._on_summary = value
 
+    # No docstring: takes no parameters, implementation detail. In TypeScript, we even don't have a constructor at all.
     def __init__(self) -> None:
-        r"""
-        Creates a solver instance for asynchronous solving.
-
-        Callbacks can be configured after instantiation using the properties:
-        :attr:`Solver.on_log`, :attr:`Solver.on_warning`, :attr:`Solver.on_error`,
-        :attr:`Solver.on_solution`, :attr:`Solver.on_objective_bound`, :attr:`Solver.on_summary`.
-
-        Output stream is configured via the :attr:`Parameters.printLog` parameter.
-
-        .. code-block:: python
-
-            solver = cp.Solver()
-            solver.on_solution = lambda event: print("Found solution!")
-            result = await solver.solve(model, cp.Parameters(printLog=False))  # Disable output
-
-        .. seealso::
-
-            - :meth:`Solver.solve` to solve a model asynchronously.
-            - :meth:`Model.solve` for simpler synchronous solving.
-        """
         # Initialize output stream and callbacks to default values
         self._output_stream: IO[str] | None = None
         self._on_log = None
@@ -506,12 +487,12 @@ class Solver:
         self._solving = False  # True while solve is running
 
     @staticmethod
-    def find_solver(params: Parameters | None = None) -> str:
+    def find_solver(parameters: Parameters | None = None) -> str:
         r"""
         Find path to the `optalcp` binary.
 
-        :param params: Parameters object that may contain the solver path or URL
-        :type params: Parameters | None
+        :param parameters: Parameters object that may contain the solver path or URL
+        :type parameters: Parameters | None
         :rtype: str
         :returns: The path to the solver executable or WebSocket URL
 
@@ -523,7 +504,7 @@ class Solver:
 
         The method works as follows:
 
-        - If `params.solver` is set, its value is returned (path or URL).
+        - If `parameters.solver` is set, its value is returned (path or URL).
         - If the `OPTALCP_SOLVER` environment variable is set, then it is used.
 
         - If pip package `optalcp-bin` is installed then
@@ -545,7 +526,7 @@ class Solver:
             print("Solver:", solver)
 
             # Or check with custom parameters
-            custom = cp.Solver.find_solver(cp.Parameters(solver='/custom/path/optalcp'))
+            custom = cp.Solver.find_solver({'solver': '/custom/path/optalcp'})
 
         .. seealso::
 
@@ -569,13 +550,13 @@ class Solver:
                 return path
             return None
 
-        # 1. Check params.solver first
-        if params is not None and params.solver is not None:
-            resolved = find_executable(params.solver)
+        # 1. Check params['solver'] first
+        if parameters is not None and (solver_path := parameters.get('solver')) is not None:
+            resolved = find_executable(solver_path)
             if resolved is not None:
                 return resolved
             raise FileNotFoundError(
-                f"solver points to invalid executable: {params.solver}"
+                f"solver points to invalid executable: {solver_path}"
             )
 
         # 2. Check OPTALCP_SOLVER environment variable
@@ -720,18 +701,22 @@ class Solver:
             raise RuntimeError("Solver is already running. Create a new Solver instance for concurrent solves.")
 
         self._reset_state()
-        self._configure_output(params.printLog if params else None)
+        self._configure_output(params.get('printLog') if params else None)
 
-        # Determine if solution values should be deferred
-        # Check both the callback attribute and if on_solution is overridden in a subclass
+        # Determine if results should be batched (no incremental solution/lowerBound messages)
+        # Batch when no callbacks are registered for solution or objective bound events
         has_on_solution = (
             self._on_solution is not None or
             type(self).on_solution is not Solver.on_solution
         )
-        defer_solution = command == "solve" and not has_on_solution
+        has_on_objective_bound = (
+            self._on_objective_bound is not None or
+            type(self).on_objective_bound is not Solver.on_objective_bound
+        )
+        batch_results = command == "solve" and not has_on_solution and not has_on_objective_bound
 
         # Prepare command data (shared with sync version)
-        json_bytes = self._prepare_command(command, model, params, warm_start, defer_solution)
+        json_bytes = self._prepare_command(command, model, params, warm_start, batch_results)
 
         self._solving = True
 
@@ -760,8 +745,8 @@ class Solver:
 
         # Start solver subprocess
         try:
-            buffer_size = params.pythonStreamBufferSize if params else 2*1024*1024
-            solver_args = params.solverArgs if params else []
+            buffer_size = params.get('pythonStreamBufferSize', 2*1024*1024) if params else 2*1024*1024
+            solver_args = params.get('solverArgs', []) if params else []
             self._process = await asyncio.create_subprocess_exec(
                 self._solver_path,
                 *solver_args,
@@ -818,7 +803,7 @@ class Solver:
                 self._task_group = None
 
             # Wait for process to finish (with timeout)
-            timeout_sec = params.processExitTimeout if params and params.processExitTimeout is not None else 3.0
+            timeout_sec = val if params and (val := params.get('processExitTimeout')) is not None else 3.0
             try:
                 await asyncio.wait_for(self._process.wait(), timeout=timeout_sec)
             except TimeoutError:
@@ -927,21 +912,9 @@ class Solver:
     async def _to_text(self,
                        command: str,
                        model: Model,
-                       params: Parameters | None = None,
+                       parameters: Parameters | None = None,
                        warm_start: Solution | None = None) -> str:
-        """
-        Convert model to text format using the specified command.
-
-        Args:
-            command: Either 'toText' or 'toJS'
-            model: The model to convert
-            params: Optional solver parameters
-            warm_start: Optional initial solution
-
-        Returns:
-            The text representation of the model
-        """
-        await self._run(command, model, params, warm_start)
+        await self._run(command, model, parameters, warm_start)
 
         if self._text_result is None:
             raise RuntimeError("Solver did not return a textModel message")
@@ -990,7 +963,7 @@ class Solver:
                     timer.start()
 
             solver.on_solution = on_solution
-            result = await solver.solve(model, cp.Parameters(timeLimit=300))
+            result = await solver.solve(model, {'timeLimit': 300})
         """
         # No process running or already finished
         if self._process is None or self._process.returncode is not None:
@@ -1100,15 +1073,15 @@ class Solver:
 
     async def to_text(self,
                       model: Model,
-                      params: Parameters | None = None,
+                      parameters: Parameters | None = None,
                       warm_start: Solution | None = None) -> str:
         r"""
         Converts a model to text format (async version).
 
         :param model: The model to convert
         :type model: Model
-        :param params: Optional solver parameters
-        :type params: Parameters | None
+        :param parameters: Optional solver parameters
+        :type parameters: Parameters | None
         :param warm_start: Optional initial solution to include
         :type warm_start: Solution | None
         :rtype: str
@@ -1143,19 +1116,19 @@ class Solver:
             - :meth:`Model.to_text` for synchronous usage.
             - :meth:`Solver.to_js` for JavaScript export.
         """
-        return await self._to_text("toText", model, params, warm_start)
+        return await self._to_text("toText", model, parameters, warm_start)
 
     async def to_js(self,
                     model: Model,
-                    params: Parameters | None = None,
+                    parameters: Parameters | None = None,
                     warm_start: Solution | None = None) -> str:
         r"""
         Converts a model to JavaScript code (async version).
 
         :param model: The model to convert
         :type model: Model
-        :param params: Optional solver parameters (included in generated code)
-        :type params: Parameters | None
+        :param parameters: Optional solver parameters (included in generated code)
+        :type parameters: Parameters | None
         :param warm_start: Optional initial solution to include
         :type warm_start: Solution | None
         :rtype: str
@@ -1194,7 +1167,7 @@ class Solver:
             - :meth:`Model.to_js` for synchronous usage.
             - :meth:`Solver.to_text` for text format export.
         """
-        return await self._to_text("toJS", model, params, warm_start)
+        return await self._to_text("toJS", model, parameters, warm_start)
 
     # =========================================================================
     # Shared helper methods (used by both sync and async solving)
@@ -1243,7 +1216,7 @@ class Solver:
                          model: Model,
                          params: Parameters | None,
                          warm_start: Solution | None,
-                         defer_solution: bool = False) -> bytes:
+                         batch_results: bool = False) -> bytes:
         """
         Prepare solver command data (shared by sync and async).
 
@@ -1261,13 +1234,13 @@ class Solver:
         model_data['msg'] = command
 
         if params:
-            model_data['parameters'] = params._to_dict()
+            model_data['parameters'] = _parameters_to_json(params)
 
         if warm_start:
             model_data['warmStart'] = warm_start._to_dict()
 
-        if defer_solution:
-            model_data['deferSolution'] = True
+        if batch_results:
+            model_data['batchResults'] = True
 
         json_bytes = _serialize_to_json(model_data)
 
@@ -1357,7 +1330,7 @@ class Solver:
             return True
 
         if msg_type == 'solution' and data is not None:
-            # Always track objective history (even when deferSolution is true)
+            # Track objective history (only received when batchResults=false)
             history_item = ObjectiveEntry(
                 solve_time=data['solveTime'],
                 objective=data.get('objective'),
@@ -1369,7 +1342,7 @@ class Solver:
             if 'verifiedOK' in data:
                 self._solution_valid = data['verifiedOK']
 
-            # Create Solution and call callback only if values are present (deferSolution false)
+            # Create Solution and call callback (values always present in solution messages)
             if 'values' in data:
                 solution = Solution()
                 solution._init_from_dict(data)
@@ -1399,7 +1372,33 @@ class Solver:
 
         if msg_type == 'summary' and data is not None:
             self._raw_summary_data = data
-            # Handle deferred solution values (when deferSolution was true)
+            # Handle batched histories (when batchResults was true)
+            if 'objectiveHistory' in data and data['objectiveHistory'] is not None:
+                self._objective_history = [
+                    ObjectiveEntry(
+                        solve_time=entry['solveTime'],
+                        objective=entry.get('objective'),
+                        valid=entry.get('verifiedOK')
+                    )
+                    for entry in data['objectiveHistory']
+                ]
+                # Update solution_time and solution_valid from last entry
+                if self._objective_history:
+                    last = self._objective_history[-1]
+                    self._solution_time = last.solve_time
+                    self._solution_valid = last.valid
+            if 'objectiveBoundHistory' in data and data['objectiveBoundHistory'] is not None:
+                self._objective_bound_history = [
+                    ObjectiveBoundEntry(
+                        solve_time=entry['solveTime'],
+                        value=entry['value']
+                    )
+                    for entry in data['objectiveBoundHistory']
+                ]
+                # Update best_lb_time from last entry
+                if self._objective_bound_history:
+                    self._best_lb_time = self._objective_bound_history[-1].solve_time
+            # Handle batched solution values (when batchResults was true)
             if 'solutionValues' in data and data['solutionValues'] is not None:
                 if self._solution is None:
                     self._solution = Solution()
@@ -1435,13 +1434,13 @@ class Solver:
             raise RuntimeError("Solver is already running. Create a new Solver instance for concurrent solves.")
 
         self._reset_state()
-        self._configure_output(params.printLog if params else None)
+        self._configure_output(params.get('printLog') if params else None)
 
-        # Sync API always defers solution values (no callbacks available)
-        defer_solution = command == "solve"
+        # Sync API always batches results (no callbacks available)
+        batch_results = command == "solve"
 
         # Prepare command data (shared with async version)
-        json_bytes = self._prepare_command(command, model, params, warm_start, defer_solution)
+        json_bytes = self._prepare_command(command, model, params, warm_start, batch_results)
 
         self._solving = True
 
@@ -1475,7 +1474,7 @@ class Solver:
 
         try:
             # Start solver subprocess
-            solver_args = params.solverArgs if params else []
+            solver_args = params.get('solverArgs', []) if params else []
             sync_process = subprocess.Popen(
                 [self._solver_path, *solver_args],
                 stdin=subprocess.PIPE,
@@ -1507,7 +1506,7 @@ class Solver:
                 self._handle_message(line)
 
             # Wait for process to finish (with timeout)
-            timeout_sec = params.processExitTimeout if params and params.processExitTimeout is not None else 3.0
+            timeout_sec = val if params and (val := params.get('processExitTimeout')) is not None else 3.0
             try:
                 sync_process.wait(timeout=timeout_sec)
             except subprocess.TimeoutExpired:

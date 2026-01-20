@@ -1,0 +1,6 @@
+# Sphinx build output
+html/
+build/
+
+# Windows batch file (we use CMake instead)
+make.bat

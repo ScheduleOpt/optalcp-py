@@ -288,7 +288,7 @@ class SequenceVar(ModelElement):
             sequence.no_overlap(transitions)
 
             # Solve the model:
-            result = model.solve(cp.Parameters(solutionLimit=1))
+            result = model.solve({'solutionLimit': 1})
         """
         if transitions is None:
             return Constraint(self._model, 'noOverlap', [self._as_arg()])

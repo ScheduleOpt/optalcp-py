@@ -48,10 +48,10 @@ class Solution:
         Creates an empty solution.
 
         Creates a solution where all variables are absent, and the
-        objective value is `None`.
+        objective value is `None`/`None`.
 
         Use this constructor to create an external solution that can be passed to
-        the solver as a warm start (see :meth:`Model.solve` parameter `warm_start`)
+        the solver as a warm start (see :meth:`Model.solve`)
         or sent during solving using :meth:`Solver.send_solution`.
 
         .. code-block:: python
@@ -67,7 +67,7 @@ class Solution:
             solution.set_value(x, 0, 10)  # x starts at 0, ends at 10
 
             # Use it as a warm start
-            result = model.solve(warm_start=solution)
+            result = model.solve({'timeLimit': 60}, solution)
         """
         # The values can be:
         #   - None (absent variable)
