@@ -6,7 +6,7 @@ A Pythonic interface to the OptalCP constraint programming solver.
 
 from __future__ import annotations
 
-__version__: str = '2025.12.2'
+__version__: str = '2026.1.0'
 
 # Import main classes
 from ._model import Model as Model

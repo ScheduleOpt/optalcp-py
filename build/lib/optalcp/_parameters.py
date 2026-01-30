@@ -3379,7 +3379,7 @@ def _handle_help_flags(
 ) -> None:
     """Handle --help/-h and --optalcpVersion flags."""
     show_help = '--help' in args or '-h' in args
-    show_version = '--optalcpVersion' in args
+    show_version = any(arg.lower() == '--optalcpversion' for arg in args)
 
     if not show_help and not show_version:
         return

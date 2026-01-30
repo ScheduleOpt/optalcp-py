@@ -778,6 +778,9 @@ class Solver:
             # Also, do not close stdin here - we may need to send additional messages
             # (e.g., solutions via send_solution()) during the solve
 
+            # Signal that solving has started (for send_solution synchronization)
+            self._started.set()
+
             # Use TaskGroup to manage async handler tasks such as user's async callbacks
             # Also run _process_messages() and _read_stderr() as tasks so any exception
             # will immediately cancel all tasks in the group
@@ -1004,6 +1007,7 @@ class Solver:
         :attr:`Parameters.logLevel` is set to 0, the solver will log a message when it
         receives the solution.
         """
+        await self._started.wait()
         self._send_message({"msg": "solution", "data": solution._to_dict()})
 
     def _send_message(self, message: dict[str, Any]) -> None:
@@ -1210,6 +1214,7 @@ class Solver:
         self._keyboard_interrupt_count = 0
         self._raw_summary_data = None
         self._text_result = None
+        self._started = asyncio.Event()
 
     def _prepare_command(self,
                          command: str,
