@@ -6,7 +6,7 @@ A Pythonic interface to the OptalCP constraint programming solver.
 
 from __future__ import annotations
 
-__version__: str = '2026.1.0'
+__version__: str = '2026.2.0'
 
 # Import main classes
 from ._model import Model as Model
@@ -46,7 +46,6 @@ from ._result import (
     SolveResult as SolveResult,
     ObjectiveEntry as ObjectiveEntry,
     ObjectiveBoundEntry as ObjectiveBoundEntry,
-    SolveSummary as SolveSummary,
 )
 from ._solver import (
     Solver as Solver,
@@ -89,5 +88,4 @@ __all__: list[str] = [
     'SolutionEvent',
     'ObjectiveEntry',
     'ObjectiveBoundEntry',
-    'SolveSummary',
 ]

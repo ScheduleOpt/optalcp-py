@@ -110,7 +110,7 @@ class ObjectiveBoundEntry:
     :returns: Seconds elapsed.
     """
 
-    value: int
+    value: int | None
     r"""
     The new bound value.
 
@@ -130,10 +130,10 @@ class _RawSolveSummary(TypedDict):
     Internal: Raw summary statistics from solver (camelCase wire format).
 
     This matches the JSON format from the solver and is used internally.
-    Users receive the snake_case SolveSummary version instead.
+    Users receive SolveResult with snake_case properties.
 
-    Most fields are required, matching TypeScript SolveSummary.
-    Only objective, lowerBound, and objectiveSense are optional.
+    Most fields are required. Only objective, lowerBound, and objectiveSense
+    are optional.
     """
     # Core results (required)
     nbSolutions: int
@@ -166,246 +166,86 @@ class _RawSolveSummary(TypedDict):
 
 
 @final
-class SolveSummary:
-    r"""
-    Summary statistics from the solver at completion.
-
-    Contains statistics about the solve including the number of solutions found,
-    the total duration, search statistics (branches, fails, restarts), and
-    information about the model and environment.
-
-    This class is passed to the `on_summary` callback. For a richer interface
-    with additional tracking data (solution history, objective bounds history),
-    see :class:`SolveResult`.
-    """
+class _SolveSummary:
+    """Internal summary statistics from solver. Use SolveResult instead."""
 
     def __init__(self, data: _RawSolveSummary):
         self._data = data
 
     @property
     def nb_solutions(self) -> int:
-        r"""
-        Number of solutions found during the solve.
-
-        :rtype: int
-        :returns: Solution count.
-        """
         return self._data['nbSolutions']
 
     @property
     def proof(self) -> bool:
-        r"""
-        Whether the solve ended with a proof (optimality or infeasibility).
-
-        :rtype: bool
-        :returns: True if the solve completed with a proof.
-
-        ## Details
-
-        When `True`, the solver has either:
-
-        - Proved optimality (found a solution within the bounds defined by
-           :attr:`Parameters.absoluteGapTolerance` and :attr:`Parameters.relativeGapTolerance`), or
-        - Proved infeasibility (no solution exists)
-
-        When `False`, the solve was interrupted (e.g., by time limit) before
-        a proof could be established.
-        """
         return self._data['proof']
 
     @property
     def duration(self) -> float:
-        r"""
-        Total duration of the solve in seconds.
-
-        :rtype: float
-        :returns: Seconds elapsed.
-        """
         return self._data['duration']
 
     @property
     def nb_branches(self) -> int:
-        r"""
-        Total number of branches explored during the solve.
-
-        :rtype: int
-        :returns: Branch count.
-        """
         return self._data['nbBranches']
 
     @property
     def nb_fails(self) -> int:
-        r"""
-        Total number of failures encountered during the solve.
-
-        :rtype: int
-        :returns: Failure count.
-        """
         return self._data['nbFails']
 
     @property
     def nb_lns_steps(self) -> int:
-        r"""
-        Total number of Large Neighborhood Search steps.
-
-        :rtype: int
-        :returns: LNS step count.
-        """
         return self._data['nbLNSSteps']
 
     @property
     def nb_restarts(self) -> int:
-        r"""
-        Total number of restarts performed during the solve.
-
-        :rtype: int
-        :returns: Restart count.
-        """
         return self._data['nbRestarts']
 
     @property
     def memory_used(self) -> int:
-        r"""
-        Memory used by the solver in bytes.
-
-        :rtype: int
-        :returns: Bytes used.
-        """
         return self._data['memoryUsed']
 
     @property
     def objective(self) -> int | None:
-        r"""
-        Best objective value found (for optimization problems).
-
-        :rtype: int | None
-        :returns: The objective value, or None if not applicable.
-
-        ## Details
-
-        The value is `None` when:
-
-        - No objective was specified in the model (no :meth:`Model.minimize` or :meth:`Model.maximize` call).
-        - No solution was found.
-        - The objective expression has an absent value in the best solution.
-        """
         return self._data.get('objective')
 
     @property
     def objective_bound(self) -> int | None:
-        r"""
-        Proved bound on the objective value.
-
-        :rtype: int | None
-        :returns: The objective bound, or None if no bound was proved.
-
-        ## Details
-
-        For minimization problems, this is a lower bound: the solver proved that
-        no solution exists with an objective value less than this bound.
-
-        For maximization problems, this is an upper bound: the solver proved that
-        no solution exists with an objective value greater than this bound.
-
-        The value is `None` when no bound was proved or for satisfaction problems.
-        """
         return self._data.get('lowerBound')
 
     @property
     def objective_sense(self) -> str | None:
-        r"""
-        Objective direction.
-
-        :rtype: str | None
-        :returns: 'minimize', 'maximize', or None for satisfaction problems.
-
-        ## Details
-
-        Indicates whether the model was a minimization problem, maximization problem,
-        or a satisfaction problem (no objective).
-        """
         return self._data.get('objectiveSense')
 
     @property
     def nb_int_vars(self) -> int:
-        r"""
-        Number of integer variables in the model.
-
-        :rtype: int
-        :returns: Integer variable count.
-        """
         return self._data['nbIntVars']
 
     @property
     def nb_interval_vars(self) -> int:
-        r"""
-        Number of interval variables in the model.
-
-        :rtype: int
-        :returns: Interval variable count.
-        """
         return self._data['nbIntervalVars']
 
     @property
     def nb_constraints(self) -> int:
-        r"""
-        Number of constraints in the model.
-
-        :rtype: int
-        :returns: Constraint count.
-        """
         return self._data['nbConstraints']
 
     @property
     def solver(self) -> str:
-        r"""
-        Solver name and version string.
-
-        :rtype: str
-        :returns: The solver identification string.
-
-        ## Details
-
-        Contains the solver name followed by its version number.
-        """
         return self._data['solver']
 
     @property
     def actual_workers(self) -> int:
-        r"""
-        Number of worker threads actually used during solving.
-
-        :rtype: int
-        :returns: Worker count.
-
-        ## Details
-
-        This is the actual number of workers used by the solver, which may differ
-        from the requested :attr:`Parameters.nbWorkers` if that parameter was not
-        specified (auto-detect) or if the system has fewer cores than requested.
-        """
         return self._data['nbWorkers']
 
     @property
     def cpu(self) -> str:
-        r"""
-        CPU name detected by the solver.
-
-        :rtype: str
-        :returns: CPU model name.
-
-        ## Details
-
-        Contains the CPU model name as detected by the operating system.
-        """
         return self._data['cpu']
 
     def __repr__(self) -> str:
         if self.nb_solutions > 0:
             obj_str = f", objective={self.objective}" if self.objective is not None else ""
-            return f"<SolveSummary: {self.nb_solutions} solution(s){obj_str}, duration={self.duration:.2f}s>"
+            return f"<_SolveSummary: {self.nb_solutions} solution(s){obj_str}, duration={self.duration:.2f}s>"
         else:
-            return f"<SolveSummary: no solution, proof={self.proof}, duration={self.duration:.2f}s>"
+            return f"<_SolveSummary: no solution, proof={self.proof}, duration={self.duration:.2f}s>"
 
 
 class SolveResult:
@@ -417,14 +257,14 @@ class SolveResult:
     **Solution data:**
 
     - :attr:`SolveResult.solution`: The best solution found (or `None` if no solution exists)
-    - :attr:`SolveSummary.objective`: The objective value of the best solution
-    - :attr:`SolveSummary.objective_bound`: The proved bound on the objective
+    - :attr:`SolveResult.objective`: The objective value of the best solution
+    - :attr:`SolveResult.objective_bound`: The proved bound on the objective
 
     **Solve statistics:**
 
-    - :attr:`SolveSummary.nb_solutions`: Total number of solutions found
-    - :attr:`SolveSummary.proof`: Whether optimality or infeasibility was proved
-    - :attr:`SolveSummary.duration`: Total solve time in seconds
+    - :attr:`SolveResult.nb_solutions`: Total number of solutions found
+    - :attr:`SolveResult.proof`: Whether optimality or infeasibility was proved
+    - :attr:`SolveResult.duration`: Total solve time in seconds
 
     **History tracking:**
 

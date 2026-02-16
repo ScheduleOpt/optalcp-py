@@ -1848,6 +1848,50 @@ class Model:
         out_params: list[_Argument] = [_wrap_int_list(coefficients), IntExpr._wrap_list(expressions), _wrap_int(constant_term)]
         return IntExpr(self, "intOptionalLinearExpr", out_params)
 
+    def element(self, array: Iterable[int], subscript: IntExpr | int) -> IntExpr:
+        r"""
+        Creates an integer expression for array element lookup by index.
+
+        :param array: Array of integer values to select from.
+        :type array: Iterable[int]
+        :param subscript: Index into the array (0-based).
+        :type subscript: IntExpr | int
+        :rtype: IntExpr
+        :returns: The resulting integer expression equal to `array[subscript]`.
+
+        ## Details
+
+        The result of `element(array, subscript)` is an integer expression equal to `array[subscript]`.
+
+        Creating the expression automatically adds a side constraint that restricts `subscript` to the valid index range `0` to `n - 1`, where `n` is the number of elements in `array`. This constraint must be satisfied in every solution, regardless of how the expression is used. For example, in `element(array, subscript) == 5 || x == 1`, the subscript must be a valid index even in solutions where `x == 1` makes the disjunction true.
+
+        When the `subscript` is *absent*, the result is also *absent*.
+
+        ## Example
+
+        In the following example, there are 3 machines with different processing times for a task. We use `element` to look up the processing time based on which machine is assigned.
+
+        .. code-block:: python
+
+            import optalcp as cp
+
+            model = cp.Model()
+            # Processing times for each machine:
+            durations = [5, 8, 3]
+            # Decision variable: which machine to use (0, 1, or 2):
+            machine = model.int_var(min=0, max=len(durations) - 1, name="machine")
+            # Look up the duration for the chosen machine:
+            duration = model.element(durations, machine)
+            task = model.interval_var(length=duration, name="task")
+            model.minimize(task.end())
+
+        .. seealso::
+
+            - :meth:`Model.int_var` to create the subscript variable.
+        """
+        out_params: list[_Argument] = [_wrap_int_list(array), IntExpr._wrap(subscript)]
+        return IntExpr(self, "intElement", out_params)
+
     def lex_le(self, lhs: Iterable[IntExpr | int], rhs: Iterable[IntExpr | int]) -> Constraint:
         r"""
         Lexicographic less than or equal constraint: `lhs` ≤ `rhs`.

@@ -88,6 +88,15 @@ class WorkerParameters(TypedDict, total=False):
     The parameter takes an integer value.
 
     The default value is `1`.
+
+    ## Environment variable `OPTALCP_RANDOM_SEED`
+
+    When `randomSeed` is not explicitly set (i.e. it remains at its default value of 1), the solver checks the environment variable `OPTALCP_RANDOM_SEED`. If the variable is set:
+
+    *  A numeric value (e.g. `42`) is used directly as the random seed.
+    *  The special value `RANDOM` (case-insensitive) tells the solver to generate a time-based seed.
+
+    This is useful for randomizing test runs without changing application code.
     """
 
     _workerFailLimit: int
@@ -1002,6 +1011,15 @@ class Parameters(TypedDict, total=False):
     The parameter takes an integer value.
 
     The default value is `1`.
+
+    ## Environment variable `OPTALCP_RANDOM_SEED`
+
+    When `randomSeed` is not explicitly set (i.e. it remains at its default value of 1), the solver checks the environment variable `OPTALCP_RANDOM_SEED`. If the variable is set:
+
+    *  A numeric value (e.g. `42`) is used directly as the random seed.
+    *  The special value `RANDOM` (case-insensitive) tells the solver to generate a time-based seed.
+
+    This is useful for randomizing test runs without changing application code.
     """
 
     logLevel: int

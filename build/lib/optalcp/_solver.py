@@ -26,7 +26,6 @@ from ._result import (
     ObjectiveBoundEntry,
     ObjectiveEntry,
     SolveResult,
-    SolveSummary,
     _RawSolveSummary,
 )
 from ._serialization import _serialize_to_json
@@ -126,7 +125,6 @@ class Solver:
     * :attr:`Solver.on_log`: Called with a `str` for every log message.
     * :attr:`Solver.on_solution`: Called with a :class:`SolutionEvent` when a solution is found.
     * :attr:`Solver.on_objective_bound`: Called with an `ObjectiveBoundEntry` when a new bound is proved.
-    * :attr:`Solver.on_summary`: Called with a :class:`SolveSummary` at the end of the solve.
 
     The solver output (log, trace, and warnings) is printed to console by default.
     It can be redirected to a file or suppressed using the :attr:`Parameters.printLog` parameter.
@@ -137,7 +135,6 @@ class Solver:
     `on_solution` callback to print the objective value of the solution
     and the value of interval variable `x`. After finding the first solution, we request
     the solver to stop.
-    We also set up an `on_summary` callback to print statistics about the solve.
 
     .. code-block:: python
 
@@ -162,18 +159,13 @@ class Solver:
             # Request the solver to stop as soon as possible:
             await solver.stop("We are happy with the first solution found.")
 
-        # Define summary handler:
-        def handle_summary(summary: cp.SolveSummary):
-            print(f"Total duration of solve: {summary.duration}")
-            print(f"Number of branches: {summary.nb_branches}")
-
         # Set callbacks:
         solver.on_solution = handle_solution
-        solver.on_summary = handle_summary
 
         # Solve (async):
         result = await solver.solve(model, {'timeLimit': 60})
-        print("All done")
+        print(f"Total duration of solve: {result.duration}")
+        print(f"Number of branches: {result.nb_branches}")
     """
 
     # Type declarations for instance variables used in properties before __init__
@@ -407,55 +399,6 @@ class Solver:
             raise RuntimeError("Cannot change on_objective_bound while solve is running")
         self._on_objective_bound = value
 
-    @property
-    def on_summary(self) -> Callable[[SolveSummary], None] | Callable[[SolveSummary], Awaitable[None]] | None:
-        r"""
-        Callback for solve completion event.
-
-        The callback is called once when the solve completes, providing final statistics. The default is no callback.
-
-        The callback receives one argument:
-
-        - `summary` (:class:`SolveSummary`): Solve statistics with properties including:
-           - `nb_solutions` (`int`): Number of solutions found.
-           - `duration` (`float`): Total solve time in seconds.
-           - `nb_branches` (`int`): Number of branches explored.
-           - `objective` (`float | None`): Best objective value, or `None` if no solution found.
-           - Plus many other statistics (see :class:`SolveSummary`).
-
-        The callback can be either synchronous or asynchronous. If the callback raises an exception, the solve is aborted with that error.
-
-        **Note:** This property cannot be changed while a solve is in progress. Attempting to set it during an active solve raises an error.
-
-        .. code-block:: python
-
-            def handle_summary(summary: cp.SolveSummary) -> None:
-                print(f"Solve completed: {summary.nb_solutions} solutions")
-                print(f"Time: {summary.duration:.2f}s")
-                if summary.objective is not None:
-                    print(f"Best objective: {summary.objective}")
-
-            solver = cp.Solver()
-            solver.on_summary = handle_summary
-
-            # Asynchronous callback
-            async def async_handle_summary(summary: cp.SolveSummary) -> None:
-                await save_stats_to_db(summary)
-
-            solver.on_summary = async_handle_summary
-
-        .. seealso::
-
-            - :class:`SolveSummary` for the complete list of statistics.
-        """
-        return self._on_summary
-
-    @on_summary.setter
-    def on_summary(self, value: Callable[[SolveSummary], None] | Callable[[SolveSummary], Awaitable[None]] | None) -> None:
-        if self._solving:
-            raise RuntimeError("Cannot change on_summary while solve is running")
-        self._on_summary = value
-
     # No docstring: takes no parameters, implementation detail. In TypeScript, we even don't have a constructor at all.
     def __init__(self) -> None:
         # Initialize output stream and callbacks to default values
@@ -465,7 +408,6 @@ class Solver:
         self._on_error = None
         self._on_solution = None
         self._on_objective_bound = None
-        self._on_summary = None
 
         self._process: asyncio.subprocess.Process | None = None
         self._stop_requested = False
@@ -778,8 +720,11 @@ class Solver:
             # Also, do not close stdin here - we may need to send additional messages
             # (e.g., solutions via send_solution()) during the solve
 
-            # Signal that solving has started (for send_solution synchronization)
-            self._started.set()
+            # Flush pending solutions (queued by send_solution before model was sent)
+            self._model_sent = True
+            for msg in self._pending_solutions:
+                self._send_message(msg)
+            self._pending_solutions.clear()
 
             # Use TaskGroup to manage async handler tasks such as user's async callbacks
             # Also run _process_messages() and _read_stderr() as tasks so any exception
@@ -978,10 +923,11 @@ class Solver:
             return
 
         # Try graceful stop via _send_message (returns silently if can't send)
-        self._send_message({"msg": "stop", "reason": reason})
+        # Set flag before sending to prevent concurrent stop() calls from sending twice
         self._stop_requested = True
+        self._send_message({"msg": "stop", "reason": reason})
 
-    async def send_solution(self, solution: Solution) -> None:
+    def send_solution(self, solution: Solution) -> None:
         r"""
         Send an external solution to the solver.
 
@@ -1003,12 +949,18 @@ class Solver:
 
         Sending a solution to a solver that has already stopped has no effect.
 
-        The solution is sent to the solver asynchronously. Unless parameter
-        :attr:`Parameters.logLevel` is set to 0, the solver will log a message when it
-        receives the solution.
+        If the function is called before the model is sent to the solver, the
+        solution is queued internally and sent automatically once the model transfer
+        completes. Unless parameter :attr:`Parameters.logLevel` is set to 0, the
+        solver will log a message when it receives the solution.
         """
-        await self._started.wait()
-        self._send_message({"msg": "solution", "data": solution._to_dict()})
+        if not self._solving:
+            return
+        msg = {"msg": "solution", "data": solution._to_dict()}
+        if self._model_sent:
+            self._send_message(msg)
+        else:
+            self._pending_solutions.append(msg)
 
     def _send_message(self, message: dict[str, Any]) -> None:
         """
@@ -1214,7 +1166,8 @@ class Solver:
         self._keyboard_interrupt_count = 0
         self._raw_summary_data = None
         self._text_result = None
-        self._started = asyncio.Event()
+        self._model_sent = False
+        self._pending_solutions: list[dict[str, Any]] = []
 
     def _prepare_command(self,
                          command: str,
@@ -1334,7 +1287,8 @@ class Solver:
             self._call_handler(self.on_warning, data)
             return True
 
-        if msg_type == 'solution' and data is not None:
+        if msg_type == 'solution':
+            assert data is not None
             # Track objective history (only received when batchResults=false)
             history_item = ObjectiveEntry(
                 solve_time=data['solveTime'],
@@ -1360,7 +1314,8 @@ class Solver:
                 self._call_handler(self.on_solution, event)
             return True
 
-        if msg_type == 'lowerBound' and data is not None:
+        if msg_type == 'lowerBound':
+            assert data is not None
             bound_event = ObjectiveBoundEntry(
                 solve_time=data['solveTime'],
                 value=data['value']
@@ -1375,7 +1330,8 @@ class Solver:
             self._closing = True  # Terminal message - only errors allowed after this
             return True  # Continue reading until EOF
 
-        if msg_type == 'summary' and data is not None:
+        if msg_type == 'summary':
+            assert data is not None
             self._raw_summary_data = data
             # Handle batched histories (when batchResults was true)
             if 'objectiveHistory' in data and data['objectiveHistory'] is not None:
@@ -1411,8 +1367,6 @@ class Solver:
                     'values': data['solutionValues'],
                     'objective': data.get('objective')
                 })
-            user_summary = SolveSummary(data)
-            self._call_handler(self.on_summary, user_summary)
             self._closing = True  # Terminal message - only errors allowed after this
             return True  # Continue reading until EOF
 
@@ -1502,6 +1456,14 @@ class Solver:
             # Send command
             sync_process.stdin.write(json_bytes)
             sync_process.stdin.flush()
+
+            # Flush pending solutions (queued by send_solution before model was sent)
+            self._model_sent = True
+            for msg in self._pending_solutions:
+                msg_bytes = _serialize_to_json(msg) + b'\n'
+                sync_process.stdin.write(msg_bytes)
+                sync_process.stdin.flush()
+            self._pending_solutions.clear()
 
             # Process messages until done (continues reading until EOF after terminal message)
             while True:

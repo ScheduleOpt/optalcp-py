@@ -38,7 +38,6 @@ tests/test_parameters.py
 tests/test_sequence_var.py
 tests/test_solution.py
 tests/test_solver.py
-tests/test_solvesummary_completeness.py
 tests/test_stop_behavior.py
 tests/test_to_text.py
 tests/test_tutorial.py

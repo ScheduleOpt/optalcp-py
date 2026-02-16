@@ -147,9 +147,12 @@ class ModelElement:
             # First time this element is used in an expression
             self._arg = {'arg': self._props}
         elif 'ref' not in self._arg:
-            # Second time the element is used - create a reference
+            # Second time the element is used - create a reference.
+            # Mutate in-place so that the first consumer (which already holds
+            # a reference to this dict) also sees the update.
             ref_id = self._model._get_new_ref_id(self._props)
-            self._arg = {'ref': ref_id}
+            del self._arg['arg']
+            self._arg['ref'] = ref_id
         return self._arg
 
     def _force_ref(self) -> None:
