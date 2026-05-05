@@ -10,6 +10,9 @@ mypy>=1.0
 pyright>=1.1.0
 ruff>=0.8.0
 pydoclint>=0.5.0
+sphinx>=7.0
+myst-parser>=3.0
+sphinx-rtd-theme>=2.0
 
 [fast]
 orjson>=3.9.0

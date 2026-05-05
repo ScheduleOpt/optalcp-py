@@ -1,6 +1,6 @@
 Metadata-Version: 2.4
 Name: optalcp
-Version: 2026.2.0
+Version: 2026.4.0
 Summary: Python API for OptalCP constraint programming solver
 Author: CoEnzyme SAS
 License-Expression: LicenseRef-Proprietary
@@ -32,6 +32,9 @@ Requires-Dist: mypy>=1.0; extra == "dev"
 Requires-Dist: pyright>=1.1.0; extra == "dev"
 Requires-Dist: ruff>=0.8.0; extra == "dev"
 Requires-Dist: pydoclint>=0.5.0; extra == "dev"
+Requires-Dist: sphinx>=7.0; extra == "dev"
+Requires-Dist: myst-parser>=3.0; extra == "dev"
+Requires-Dist: sphinx-rtd-theme>=2.0; extra == "dev"
 Dynamic: license-file
 
 # OptalCP Python API
